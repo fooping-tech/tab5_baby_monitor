@@ -100,6 +100,7 @@ void preview(void *)
             }
             if (bsp_display_lock(0)) {
                 memcpy(pixels, render_pixels, 720 * 640 * sizeof(uint16_t));
+                lv_canvas_set_buffer(canvas, pixels, 720, 640, LV_COLOR_FORMAT_RGB565);
                 lv_obj_invalidate(canvas);
                 displayed_us = frame.captured_us;
                 ++preview_frames;
@@ -111,6 +112,7 @@ void preview(void *)
             memset(render_pixels, 0, 720 * 640 * sizeof(uint16_t));
             if (bsp_display_lock(0)) {
                 memcpy(pixels, render_pixels, 720 * 640 * sizeof(uint16_t));
+                lv_canvas_set_buffer(canvas, pixels, 720, 640, LV_COLOR_FORMAT_RGB565);
                 lv_obj_invalidate(canvas);
                 has_preview = false;
                 bsp_display_unlock();
@@ -136,9 +138,10 @@ esp_err_t edge_ui_start()
     config.flags.buff_dma = true;
     auto *display = bsp_display_start_with_config(&config);
     if (!display) return ESP_FAIL;
-    pixels = static_cast<uint16_t *>(heap_caps_calloc(720 * 640, sizeof(uint16_t), MALLOC_CAP_SPIRAM));
+    constexpr uint32_t preview_buffer_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+    pixels = static_cast<uint16_t *>(heap_caps_calloc(720 * 640, sizeof(uint16_t), preview_buffer_caps));
     if (!pixels) return ESP_ERR_NO_MEM;
-    render_pixels = static_cast<uint16_t *>(heap_caps_calloc(720 * 640, sizeof(uint16_t), MALLOC_CAP_SPIRAM));
+    render_pixels = static_cast<uint16_t *>(heap_caps_calloc(720 * 640, sizeof(uint16_t), preview_buffer_caps));
     if (!render_pixels) return ESP_ERR_NO_MEM;
     if (!bsp_display_lock(1000)) return ESP_ERR_TIMEOUT;
     lv_display_set_rotation(display, LV_DISPLAY_ROTATION_0);

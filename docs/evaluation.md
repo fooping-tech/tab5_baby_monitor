@@ -35,11 +35,11 @@ record gaps and separately compute time/event metrics for irregular sampling. It
 1. Confirm board revision/flash/PSRAM, exact model hash, IDF version, firmware hash, power source and JPEG rights.
 2. Build and size-check; manually approve flash; save flash hash verification separately.
 3. Static JPEG smoke: decode works, valid=1, plausible person score; no assertions. Single-image presence=unknown is expected.
-4. Implement the camera adapter and verify RGB/rotation/ROI, genuinely new timestamps and borrowed-buffer release.
+4. Validate the implemented USB camera adapter: RGB/rotation, genuinely new timestamps and independent AI/RTSP buffer release. ROI remains unimplemented.
 5. Measure decode/preprocess/inference/postprocess/total latency and FPS, internal/PSRAM minimum free heap,
    worker stack high-water mark, frame drops, camera disconnect/reconnect and stale-result behavior.
 6. Test UVC unplug, allocation failure and blocked inference; consumer must return unknown rather than false assurance.
-7. Validate simultaneous UI/RTSP separately (not supplied here); then attended 1-hour soak, longer run and restart recovery.
+7. Validate simultaneous AI/RTSP (implemented but hardware unverified); then attended 1-hour soak, longer run and restart recovery. UI remains out of scope.
 
 Set application-specific latency/accuracy budgets after baseline measurement; no real-time FPS claim is made.
 PLANS.md is the source of truth for what was actually run. Do not publish private image-bearing firmware/logs with a PR.

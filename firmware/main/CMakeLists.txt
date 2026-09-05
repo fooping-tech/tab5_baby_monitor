@@ -1,11 +1,13 @@
-idf_component_register(SRCS "app_main.cpp" "detector.cpp"
+idf_component_register(SRCS "app_main.cpp" "detector.cpp" "board.cpp" "network.cpp" "live.cpp"
+                           "hal/hal_uvc.cpp" "rtsp/rtsp_server.cpp" "rtsp/rtsp_framing.cpp"
                        INCLUDE_DIRS "." "../../core"
-                       PRIV_REQUIRES esp-dl yolo26 esp_timer)
+                       PRIV_REQUIRES esp-dl yolo26 esp_timer usb usb_host_uvc esp_video esp_driver_jpeg
+                                     esp_driver_i2c esp_wifi esp_event esp_netif nvs_flash mdns)
 if(NOT IDF_TARGET STREQUAL "esp32p4")
     message(FATAL_ERROR "This PoC supports ESP32-P4 only")
 endif()
 set(POC_JPEG "" CACHE FILEPATH "Explicit local JPEG for still-image smoke test")
-if(NOT EXISTS "${POC_JPEG}")
+if(NOT CONFIG_EDGE_LIVE_CAMERA AND NOT EXISTS "${POC_JPEG}")
     message(FATAL_ERROR "Pass -DPOC_JPEG=/absolute/path/to/consented-test.jpg")
 endif()
 set(MODEL_FILE "${ESP_DL_PATH}/models/yolo26/models/p4/yolo26n_512_s8_p4.espdl")
@@ -16,7 +18,9 @@ endif()
 set(cmake_dir "${ESP_DL_PATH}/esp-dl/fbs_loader/cmake")
 include("${cmake_dir}/utilities.cmake")
 configure_file("${MODEL_FILE}" "${CMAKE_CURRENT_BINARY_DIR}/person_model.espdl" COPYONLY)
-configure_file("${POC_JPEG}" "${CMAKE_CURRENT_BINARY_DIR}/poc_image.jpg" COPYONLY)
 target_add_aligned_binary_data(${COMPONENT_LIB} "${CMAKE_CURRENT_BINARY_DIR}/person_model.espdl" BINARY)
-target_add_aligned_binary_data(${COMPONENT_LIB} "${CMAKE_CURRENT_BINARY_DIR}/poc_image.jpg" BINARY)
+if(NOT CONFIG_EDGE_LIVE_CAMERA)
+    configure_file("${POC_JPEG}" "${CMAKE_CURRENT_BINARY_DIR}/poc_image.jpg" COPYONLY)
+    target_add_aligned_binary_data(${COMPONENT_LIB} "${CMAKE_CURRENT_BINARY_DIR}/poc_image.jpg" BINARY)
+endif()
 target_compile_features(${COMPONENT_LIB} PRIVATE cxx_std_17)

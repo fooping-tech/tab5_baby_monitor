@@ -4,6 +4,8 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "live_services.hpp"
+#include "nvs_flash.h"
 
 extern const uint8_t model_start[] asm("_binary_person_model_espdl_start");
 extern const uint8_t image_start[] asm("_binary_poc_image_jpg_start");
@@ -11,6 +13,11 @@ extern const uint8_t image_end[] asm("_binary_poc_image_jpg_end");
 
 extern "C" void app_main()
 {
+#if CONFIG_EDGE_LIVE_CAMERA
+    ESP_ERROR_CHECK(nvs_flash_init());
+    ESP_LOGW("baby_edge", "Live person proxy; not baby identity or a safety monitor");
+    edge_live_start(model_start);
+#else
     ESP_LOGW("baby_edge", "Still-image PoC only; person is not baby identity. Not a safety monitor.");
     baby_edge::PresenceFilter presence;
     baby_edge::PersonDetector detector(model_start);
@@ -32,4 +39,5 @@ extern "C" void app_main()
              result.valid, result.person_score, static_cast<long long>(result.inference_us),
              baby_edge::name(state), static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)));
     heap_caps_free(decoded.data);
+#endif
 }

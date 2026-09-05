@@ -1,6 +1,7 @@
 # Dependency and license record
 
-Inspected 2026-09-05. Dependencies are downloaded, not vendored in this repository.
+Inspected 2026-09-05. Dependency components are downloaded, not vendored. Adapted USB/RTSP application sources
+are included with provenance and retained MIT notices; see usb_rtsp.md.
 
 | Dependency | Selection | License / role |
 |---|---|---|
@@ -10,6 +11,9 @@ Inspected 2026-09-05. Dependencies are downloaded, not vendored in this reposito
 | YOLO26n pretrained stock weights | same revision, models/yolo26/models/p4/yolo26n_512_s8_p4.espdl | Ultralytics-derived: treat as AGPL-3.0 |
 | Ultralytics | 8.4.7 | AGPL-3.0; training, upstream quantization tutorial compatibility |
 | ESP-PPQ | 1.2.4 in upstream requirements | retain upstream license/notices; quantization only |
+| tab5_rtsp_logger reference | e5e5fee79c2232bd5de4a994d8f90e12f4630952 | MIT; UVC/RTSP source and video components; notices retained |
+| usb_host_uvc / esp_h264 | 2.5.1 / 1.0.4 | Upstream notices; fixed to reference integration versions |
+| esp_hosted / esp_wifi_remote / mdns | 1.4.0 / 0.8.5 / 1.8.2 | Upstream notices; SDIO Wi-Fi and local discovery |
 
 Upstream quantization requirements also specify onnx==1.17.0, onnxruntime>=1.19.0,
 torch>=2.4.0, torchvision>=0.19.0, numpy<2.0.0 and onnxsim>=0.4.36.

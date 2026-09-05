@@ -1,0 +1,51 @@
+menu "Tab5 Edge AI"
+    config EDGE_LIVE_CAMERA
+        bool "Use USB UVC camera instead of embedded still image"
+        default y
+    config EDGE_ENABLE_RTSP
+        bool "Expose unauthenticated RTSP on trusted LAN"
+        default n
+        help
+            Plaintext video at TCP 8554/baby. Do not expose to the internet.
+    config EDGE_HOSTNAME
+        string "mDNS hostname (no .local suffix)"
+        default "tab5-edge-ai"
+    config TAB5_WIFI_SSID
+        string "Wi-Fi SSID (local configuration only)"
+        default ""
+    config TAB5_WIFI_PASSWORD
+        string "Wi-Fi password (local configuration only)"
+        default ""
+    config TAB5_WIFI_MAX_RETRY
+        int "Wi-Fi reconnect attempts"
+        range 1 100
+        default 10
+    config TAB5_UVC_WIDTH
+        int "USB capture width"
+        range 320 1280
+        default 640
+    config TAB5_UVC_HEIGHT
+        int "USB capture height"
+        range 240 720
+        default 480
+    config TAB5_UVC_FPS
+        int "Requested USB FPS"
+        range 1 30
+        default 15
+    config TAB5_RTSP_FPS
+        int "RTSP target FPS"
+        range 1 30
+        default 15
+    config TAB5_RTSP_BITRATE
+        int "H264 bitrate"
+        range 100000 5000000
+        default 1500000
+    config TAB5_RTSP_GOP
+        int "H264 GOP"
+        range 1 120
+        default 15
+    config EDGE_AI_INTERVAL_MS
+        int "AI pause after each inference (milliseconds)"
+        range 100 10000
+        default 1000
+endmenu

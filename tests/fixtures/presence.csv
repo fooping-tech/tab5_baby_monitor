@@ -1,0 +1,5 @@
+session_id,timestamp_ms,truth,prediction,pipeline_ms
+synthetic,0,present,unknown,2100
+synthetic,2500,present,present,2050
+synthetic,5000,absent,present,2150
+synthetic,10000,absent,absent,2080

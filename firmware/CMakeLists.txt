@@ -1,0 +1,13 @@
+cmake_minimum_required(VERSION 3.16)
+set(ESP_DL_PATH "$ENV{ESP_DL_PATH}" CACHE PATH "Pinned ESP-DL checkout")
+if(NOT EXISTS "${ESP_DL_PATH}/models/yolo26/yolo26.hpp")
+    message(FATAL_ERROR "Set ESP_DL_PATH to the ESP-DL checkout documented in README.md")
+endif()
+execute_process(COMMAND git -C "${ESP_DL_PATH}" rev-parse HEAD
+                OUTPUT_VARIABLE ESP_DL_REV OUTPUT_STRIP_TRAILING_WHITESPACE RESULT_VARIABLE GIT_RESULT)
+if(NOT GIT_RESULT EQUAL 0 OR NOT ESP_DL_REV STREQUAL "5d9c36063dddbe98b5387828c831d6bbadb1370f")
+    message(FATAL_ERROR "ESP-DL revision mismatch; use the pinned revision")
+endif()
+set(EXTRA_COMPONENT_DIRS "${ESP_DL_PATH}/esp-dl" "${ESP_DL_PATH}/models/yolo26")
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+project(tab5_baby_edge_ai)

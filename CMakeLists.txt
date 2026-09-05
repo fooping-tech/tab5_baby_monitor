@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.16)
+project(baby_edge_core LANGUAGES CXX)
+enable_testing()
+add_executable(presence_test tests/presence_test.cpp)
+target_include_directories(presence_test PRIVATE core)
+target_compile_features(presence_test PRIVATE cxx_std_17)
+target_compile_options(presence_test PRIVATE -Wall -Wextra -Werror)
+add_test(NAME presence COMMAND presence_test)

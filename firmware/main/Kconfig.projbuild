@@ -9,7 +9,7 @@ menu "Tab5 Edge AI"
             Plaintext video at TCP 8554/baby. Do not expose to the internet.
     config EDGE_HOSTNAME
         string "mDNS hostname (no .local suffix)"
-        default "tab5-edge-ai"
+        default "tab5"
     config TAB5_WIFI_SSID
         string "Wi-Fi SSID (local configuration only)"
         default ""

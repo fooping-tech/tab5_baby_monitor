@@ -47,7 +47,7 @@ Memory/stack exhaustion or watchdog abort inside upstream code remains possible 
 3. Build, then verify the exact Tab5 port, board and power source before manually approving a flash.
    Connect a supported camera to USB-A; use stable power suitable for Tab5 and the camera.
 4. Serial output should show UVC negotiated/streaming, AI sequence/score/latency, and presence/status.
-   With RTSP enabled, confirm DHCP IP and use `rtsp://tab5-edge-ai.local:8554/baby` (or logged IP).
+   With RTSP enabled, confirm DHCP IP and use `rtsp://tab5.local:8554/baby` (or logged IP).
 5. Use TCP transport; do not expose port 8554 publicly. Credentials in sdkconfig and binaries are private.
 6. Existing flash layouts need careful review because this build includes an NVS partition. Do not erase NVS automatically.
 

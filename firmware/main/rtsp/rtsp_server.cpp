@@ -1502,7 +1502,10 @@ static void rtsp_task(void*)
         s_last_rtp_packet_us = 0;
         ESP_LOGI(kTag, "RTSP client connected");
         handle_client(client_fd);
-        shutdown_video();
+        // Keep the successfully prepared encoder alive across ordinary client
+        // disconnects. Recreating it after YOLO has allocated PSRAM can no
+        // longer guarantee the contiguous internal H.264 reference block.
+        // Runtime failures still use the bounded shutdown/recovery path.
         close(client_fd);
         s_diag_active_client.store(false, std::memory_order_release);
         ESP_LOGI(kTag, "RTSP client disconnected bytes=%llu send_timeouts=%u send_socket_errors=%u "
@@ -1567,6 +1570,11 @@ extern "C" esp_err_t rtsp_server_start(void)
     s_diag_server_started.store(true, std::memory_order_release);
     ESP_LOGI(kTag, "RTSP server started: rtsp://%s.local:%u/baby", CONFIG_EDGE_HOSTNAME, kRtspPort);
     return ESP_OK;
+}
+
+extern "C" esp_err_t rtsp_server_prepare(void)
+{
+    return initialize_video() ? ESP_OK : ESP_FAIL;
 }
 
 extern "C" bool rtsp_server_get_metrics(rtsp_metrics_t *metrics)

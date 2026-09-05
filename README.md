@@ -51,8 +51,8 @@ idf.py build
 
 `Tab5 Edge AI` でUSB入力（既定値）、SSID、パスワードを設定します。
 RTSPを使う場合は `Expose unauthenticated RTSP on trusted LAN` を明示的に有効にしてください。
-既定URLは `rtsp://tab5-edge-ai.local:8554/baby`。mDNS名は変更可能です（既存のtab5.localとの衝突回避）。
-クライアントはTCPを選択します：`ffplay -rtsp_transport tcp rtsp://tab5-edge-ai.local:8554/baby`。
+既定URLは `rtsp://tab5.local:8554/baby`。mDNS名は変更可能です。
+クライアントはTCPを選択します：`ffplay -rtsp_transport tcp rtsp://tab5.local:8554/baby`。
 カメラはUSB-Aへ接続。既定要求プロファイルはMJPEG優先・YUY2代替、640x480/15fpsです。
 認証・暗号化はありません。信頼できる隔離LANのみで使い、ポート転送やインターネット公開はしないでください。
 Wi-Fi設定はローカルsdkconfigにのみ保存し、ファームウェアにも含まれるためビルド成果物を公開しないでください。
@@ -81,8 +81,10 @@ USBモードではAIワーカーが最新画像だけを処理し、別の状態
 - `core/presence.hpp`: 独立した時間フィルター（入力閾値0.5、入室2秒、退室5秒、鮮度10秒）。値は未調整のPoC既定値。
 - `firmware/main/detector.*`: 公式ESP-DL前後処理、COCO80モデル契約、借用RGB888フレーム境界。
 - [データ収集・学習・量子化](docs/model_pipeline.md)
+- [学習からTab5推論まで](docs/training_and_inference.md)
 - [カメラ・baby・姿勢の拡張契約](docs/architecture.md)
 - [USB/RTSP統合・移植元・実機確認](docs/usb_rtsp.md)
+- [Camera Clock画面・実機試験条件](docs/ui_hardware.md)
 - [評価と実機受入](docs/evaluation.md)
 - [依存とライセンス](docs/dependencies.md)、[実施記録](PLANS.md)
 

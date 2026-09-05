@@ -16,6 +16,7 @@ extern "C" {
 
 /** Start the TCP RTSP listener. Camera hardware is opened on the first RTSP session. */
 esp_err_t rtsp_server_start(void);
+esp_err_t rtsp_server_prepare(void);
 
 // Read-only server/pipeline health. Counters are lifetime values for the
 // current boot and are not reset when an RTSP client disconnects.

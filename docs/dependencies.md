@@ -14,6 +14,8 @@ are included with provenance and retained MIT notices; see usb_rtsp.md.
 | tab5_rtsp_logger reference | e5e5fee79c2232bd5de4a994d8f90e12f4630952 | MIT; UVC/RTSP source and video components; notices retained |
 | usb_host_uvc / esp_h264 | 2.5.1 / 1.0.4 | Upstream notices; fixed to reference integration versions |
 | esp_hosted / esp_wifi_remote / mdns | 1.4.0 / 0.8.5 / 1.8.2 | Upstream notices; SDIO Wi-Fi and local discovery |
+| LVGL / ESP LVGL port | 9.2.2 / reference component 2.5.0 | MIT / Apache-2.0; native portrait display |
+| Tab5 BSP / ST7121 driver | same pinned reference revision | Preserve upstream Apache-2.0 notices |
 
 Upstream quantization requirements also specify onnx==1.17.0, onnxruntime>=1.19.0,
 torch>=2.4.0, torchvision>=0.19.0, numpy<2.0.0 and onnxsim>=0.4.36.

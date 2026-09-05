@@ -10,6 +10,10 @@
 #include "esp_private/wifi.h"
 #include "esp_log.h"
 #include "mdns.h"
+#include "esp_netif_sntp.h"
+#include <cstdlib>
+#include <ctime>
+#include <initializer_list>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "rtsp/rtsp_server.h"
@@ -19,6 +23,7 @@ constexpr char TAG[] = "network";
 static bool s_wifi_sta_netif_started = false;
 std::atomic<bool> connecting{false};
 bool mdns_started = false;
+bool clock_started = false;
 int retries = 0;
 static void wifi_remote_sta_start_handler(void* arg, esp_event_base_t base, int32_t event_id, void* data)
 {
@@ -117,6 +122,27 @@ void events(void *arg, esp_event_base_t base, int32_t event_id, void *data)
         else ESP_LOGE(TAG, "Wi-Fi retries exhausted; reboot or reconfigure network");
     } else if (base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         retries = 0;
+        if (!clock_started) {
+            clock_started = true;
+            xTaskCreate([](void *) {
+                setenv("TZ", "JST-9", 1);
+                tzset();
+                esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+                config.start = true;
+                const esp_err_t started = esp_netif_sntp_init(&config);
+                if (started != ESP_OK && started != ESP_ERR_INVALID_STATE) {
+                    ESP_LOGW(TAG, "SNTP init failed: %s", esp_err_to_name(started));
+                    clock_started = false;
+                    vTaskDelete(nullptr);
+                    return;
+                }
+                const esp_err_t synced = esp_netif_sntp_sync_wait(pdMS_TO_TICKS(12000));
+                ESP_LOGI(TAG, "SNTP synchronization: %s", esp_err_to_name(synced));
+                esp_netif_sntp_deinit();
+                clock_started = false;
+                vTaskDelete(nullptr);
+            }, "edge_sntp", 4096, nullptr, 4, nullptr);
+        }
         if (!mdns_started && mdns_init() == ESP_OK) {
             mdns_hostname_set(CONFIG_EDGE_HOSTNAME);
             mdns_service_add("Tab5 Edge AI", "_rtsp", "_tcp", 8554, nullptr, 0);

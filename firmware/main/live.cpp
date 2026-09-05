@@ -3,8 +3,8 @@
 #include "presence.hpp"
 #include "frame_convert.hpp"
 #include "hal/hal_uvc.h"
-#include "dl_image_jpeg.hpp"
-#include "driver/jpeg_decode.h"
+#include "jpeg_decoder.hpp"
+#include "rtsp/rtsp_server.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -17,14 +17,19 @@ namespace {
 std::mutex result_mutex;
 baby_edge::PresenceFilter presence;
 uint32_t result_generation = 0;
-constexpr size_t payload_capacity = 2 * 1024 * 1024;
+constexpr size_t payload_capacity = 1024 * 1024;
 constexpr size_t rgb_capacity = CONFIG_TAB5_UVC_WIDTH * CONFIG_TAB5_UVC_HEIGHT * 3;
 
 void infer_work(void *argument)
 {
+    constexpr size_t kModelContextMinimum = 3 * 1024 * 1024;
+    if (heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_SIMD) < kModelContextMinimum) {
+        ESP_LOGE("edge_ai", "insufficient contiguous PSRAM for model; presence remains unknown");
+        return;
+    }
     baby_edge::PersonDetector detector(static_cast<const uint8_t *>(argument));
     auto *payload = static_cast<uint8_t *>(heap_caps_malloc(payload_capacity, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    auto *rgb = static_cast<uint8_t *>(heap_caps_malloc(rgb_capacity, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    auto *rgb = edge_jpeg_rgb_buffer_alloc(rgb_capacity);
     if (!payload || !rgb) {
         heap_caps_free(payload);
         heap_caps_free(rgb);
@@ -40,26 +45,17 @@ void infer_work(void *argument)
             baby_edge::Detection result{};
             if (info.width > 0 && info.height > 0 && info.width <= CONFIG_TAB5_UVC_WIDTH &&
                 info.height <= CONFIG_TAB5_UVC_HEIGHT && esp_timer_get_time() / 1000 - captured_ms <= 1000) {
-                dl::image::img_t decoded{};
+                uint8_t *decoded = nullptr;
                 if (info.format == HAL_UVC_FRAME_MJPEG) {
-                    jpeg_decode_picture_info_t picture{};
-                    if (jpeg_decoder_get_info(payload, info.bytes, &picture) == ESP_OK &&
-                        picture.width == info.width && picture.height == info.height) {
-                        dl::image::jpeg_img_t jpeg{};
-                        jpeg.data = payload;
-                        jpeg.data_len = info.bytes;
-                        decoded = dl::image::sw_decode_jpeg(jpeg, dl::image::DL_IMAGE_PIX_TYPE_RGB888);
-                    }
+                    if (edge_decode_jpeg_rgb888(payload, info.bytes, info.width, info.height, rgb, rgb_capacity)) decoded = rgb;
                 } else if (info.format == HAL_UVC_FRAME_YUY2 &&
                            baby_edge::yuy2_to_rgb(payload, info.bytes, info.width, info.height, info.stride, rgb, rgb_capacity)) {
-                    decoded = {rgb, static_cast<uint16_t>(info.width), static_cast<uint16_t>(info.height),
-                               dl::image::DL_IMAGE_PIX_TYPE_RGB888};
+                    decoded = rgb;
                 }
-                if (decoded.data && decoded.width == info.width && decoded.height == info.height) {
-                    result = detector.detect({static_cast<uint8_t *>(decoded.data), decoded.bytes(),
-                                              decoded.width, decoded.height, captured_ms});
+                if (decoded) {
+                    result = detector.detect({decoded, static_cast<size_t>(info.width) * info.height * 3,
+                                              static_cast<uint16_t>(info.width), static_cast<uint16_t>(info.height), captured_ms});
                 }
-                if (decoded.data != rgb) heap_caps_free(decoded.data);
             }
             {
                 std::lock_guard<std::mutex> lock(result_mutex);
@@ -89,9 +85,19 @@ void edge_live_start(const unsigned char *model_data)
     ESP_ERROR_CHECK(edge_board_start());
     ESP_ERROR_CHECK(hal_uvc_init() ? ESP_OK : ESP_FAIL);
     ESP_ERROR_CHECK(hal_uvc_start() ? ESP_OK : ESP_FAIL);
+    for (int retry = 0; retry < 50 && !hal_uvc_is_streaming(); ++retry) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    if (hal_uvc_is_streaming()) {
+        ESP_ERROR_CHECK(rtsp_server_prepare());
+    } else {
+        ESP_LOGW("edge_ai", "UVC did not start before RTSP preparation; RTSP will retry on DESCRIBE");
+    }
+    ESP_ERROR_CHECK(edge_jpeg_decoder_start());
+    ESP_ERROR_CHECK(edge_ui_start());
     ESP_ERROR_CHECK(edge_network_start());
-    if (xTaskCreateWithCaps(infer, "edge_ai", 32 * 1024, const_cast<unsigned char *>(model_data), 2,
-                            nullptr, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
+    if (xTaskCreateWithCaps(infer, "edge_ai", 12 * 1024, const_cast<unsigned char *>(model_data), 2,
+                            nullptr, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) != pdPASS) {
         ESP_LOGE("edge_ai", "AI task unavailable; presence remains unknown");
     }
     while (true) {
@@ -105,6 +111,7 @@ void edge_live_start(const unsigned char *model_data)
         ESP_LOGI("edge_status", "presence=%s posture=unknown usb=%d free_psram=%u",
                  baby_edge::name(state), hal_uvc_is_streaming(),
                  static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+        edge_ui_status(baby_edge::name(state));
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }

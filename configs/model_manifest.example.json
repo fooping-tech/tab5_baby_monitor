@@ -1,0 +1,19 @@
+{
+  "status": "template-not-a-validated-model",
+  "task": "person_presence_proxy",
+  "source_repository": "https://github.com/espressif/esp-dl",
+  "source_revision": "5d9c36063dddbe98b5387828c831d6bbadb1370f",
+  "file": "yolo26n_512_s8_p4.espdl",
+  "sha256": "REPLACE_WITH_SHA256_OF_ACTUAL_MODEL",
+  "input": {"width": 512, "height": 512, "channels": "RGB", "letterbox": 114, "normalization": "0..1"},
+  "target": "esp32p4",
+  "labels": "COCO80; person=0, not baby identity",
+  "application_license": "AGPL-3.0-only",
+  "upstream_model_license_review": "Ultralytics AGPL-3.0; preserve upstream notices",
+  "dataset_version": "REPLACE_WITH_PRIVATE_DATASET_DIGEST",
+  "calibration_split": "train-only",
+  "seed": 42,
+  "tool_environment_lock": "REPLACE_WITH_PIP_FREEZE_ARTIFACT",
+  "evaluation_report": "PENDING",
+  "hardware_validation": "PENDING"
+}

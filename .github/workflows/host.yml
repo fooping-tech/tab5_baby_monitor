@@ -1,0 +1,12 @@
+name: Host checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S . -B build && cmake --build build && ctest --test-dir build --output-on-failure
+      - run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - run: git diff --check

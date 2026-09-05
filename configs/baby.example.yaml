@@ -1,0 +1,6 @@
+path: /absolute/private/dataset/baby
+train: images/train
+val: images/val
+test: images/test
+names:
+  0: baby

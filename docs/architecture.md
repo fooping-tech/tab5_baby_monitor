@@ -1,53 +1,57 @@
-# Architecture and extension gates
+# 設計と拡張時の契約
 
-## Current path
+## 現在の処理経路
 
-Default: USB UVC → bounded 3-slot compressed/raw copy broker → independent RTSP and AI consumers.
-AI copies the newest frame, decodes MJPEG in software (or converts YUY2), then runs PersonDetector → PresenceFilter.
-RTSP uses its own copy, hardware JPEG conversion / hardware H.264 V4L2 and TCP interleaved RTP.
-Optional still mode: consented JPEG → RGB888 → PersonDetector → PresenceFilter → one serial log.
-PersonDetector owns dl::Model before YOLO26, so destruction releases the processor before its model.
-The upstream preprocessor owns letterboxing (114), RGB normalization (0/255) and tensor quantization;
-do not resize twice or add NMS to the one2one decoder. Max 32 detections, upstream decode threshold 0.25,
-presence threshold 0.5. Crowded scenes may truncate a person outside top-K; measure this limitation.
+標準の経路は、USB UVC → 3スロットの上限付き圧縮/生フレームcopy broker → 独立したRTSP・AI消費者です。
+AIは最新フレームをコピーし、MJPEGを復号（またはYUY2を変換）してから `PersonDetector` と
+`PresenceFilter` を実行します。RTSPは別コピーを使い、JPEG変換、ハードウェアH.264 V4L2、
+TCP interleaved RTPで配信します。
 
-## Live Tab5 camera adapter (implemented, hardware unverified)
+静止画モードでは、同意済みJPEG → RGB888 → `PersonDetector` → `PresenceFilter` を一回だけ実行します。
+`PersonDetector` はYOLO26より先に `dl::Model` を所有するため、破棄時にはプロセッサより先にモデルを解放します。
 
-Supply a packed, contiguous RGB888 `RgbFrame` with `bytes = width * height * 3`.
-`captured_ms` and `now_ms` must use the same monotonic clock (esp_timer / 1000).
-Pixels are borrowed only during synchronous `detect`; camera owner must keep them stable and release afterwards.
-Convert RGB565/JPEG/strided DMA buffers in the adapter, with explicit length and ownership checks.
-No inference or conversions on a UVC callback, LVGL lock, RTSP task or interrupt.
-The application uses a single priority-2 inference worker and a bounded latest-frame broker; discard superseded frames,
-never queue an unbounded backlog. Do not share the non-thread-safe detector across tasks.
+上流の前処理がletterbox（padding 114）、RGB正規化（0/255）、テンソル量子化を担います。二重のリサイズや、
+one2oneデコーダへの追加NMSは行いません。最大検出数は32、上流の検出しきい値は0.25、在室しきい値は0.5です。
+混雑した場面ではtop-Kにより人物が落ちる可能性があるため、実データで測定します。
 
-Each newly captured frame calls `filter.update(captured_ms, now_ms, result.valid, result.person_score)`.
-Duplicate/out-of-order timestamps, invalid scores, decode failure, incompatible model and excessive age yield unknown.
-The main loop calls `filter.current(now_ms)` every second even when the source disconnects;
-otherwise a cached present value can survive a blocked inference worker. Do not refresh timestamps on replayed frames.
-Log capture time, completion time, sequence, validity/reason, score, state, model hash and config version.
-Hardware aborts/asserts inside upstream allocation/model execution cannot be converted into a result by this scaffold:
-external stale handling and reboot-to-unknown are necessary; measure OOM and watchdog behavior on-device.
+## Tab5のライブカメラアダプタ
 
-Initial integration should crop a configured crib ROI before inference and report ROI-relative meaning, not whole-room identity.
-Confirm portrait rotation/mirror and aspect ratio with annotated test images before using ROI logic.
-Both runners currently use the entire image and have no ROI. Acquisition timestamp comes from the USB callback,
-not inference start. Stream generations prevent pre-disconnect inference from being published after reconnect.
-The application owns UVC for its whole lifetime; RTSP TEARDOWN cannot stop AI capture. No MIPI fallback is permitted.
+`RgbFrame` には、連続したRGB888領域と `bytes = width * height * 3` を渡します。
+`captured_ms` と `now_ms` は同じ単調時計（`esp_timer / 1000`）を使います。画素は同期 `detect` の実行中だけ
+借用し、所有者はその間データを安定させます。
 
-## Baby one-class detector
+RGB565、JPEG、stride付きDMAバッファの変換は、長さと所有権を確認するアダプタで行います。UVCコールバック、
+LVGLロック、RTSPタスク、割り込みの中で推論・変換を行いません。アプリケーションは優先度2の推論ワーカーを1つだけ
+持ち、最新フレームのみに制限します。古いフレームは捨て、キューを無制限に増やさず、非スレッドセーフな検出器を共有しません。
 
-Keep an independent versioned detector adapter rather than silently changing COCO class 0 to baby.
-Current firmware intentionally rejects class count != 80 and selects only the pinned stock model.
-For a future baby model, explicitly change CMake model selection, expected input dimensions, head shapes,
-label count/name, target class and provenance manifest together; require held-out evaluation before enabling it.
-Share `PresenceFilter`, not model-specific decoder assumptions. Person false positives from caregivers must be measured.
+新しいフレームごとに `filter.update(captured_ms, now_ms, result.valid, result.person_score)` を呼びます。
+重複/逆順の時刻、不正スコア、復号失敗、非互換モデル、過度に古い入力はすべて `unknown` です。
+メインループはソース切断中も毎秒 `filter.current(now_ms)` を呼び、停止した推論ワーカーの古い `present` を残しません。
+再生フレームで時刻を更新しません。
 
-## Posture stage
+ログには取得時刻、完了時刻、連番、有効性/理由、スコア、状態、モデルハッシュ、設定版を記録します。
+上流の確保・モデル実行中のabort/assertはこのPoCだけでは結果に変換できません。外部での鮮度処理、再起動後の
+`unknown`、OOM/ウォッチドッグの実機評価が必要です。
 
-Future contract: baby ROI → classifier → `{supine, not_supine, unknown}` with confidence, quality,
-capture timestamp, model hash and rejection reason. No classification if missing baby, occlusion, blur,
-multiple ambiguous boxes, out-of-distribution input, stale crop or insufficient confidence.
-Unknown is not supine. Define not_supine precisely in the annotation guide (e.g. prone or lateral),
-and retain separate subclass annotations for audit. Do not infer posture from the person bounding-box aspect ratio.
-The enum is only a contract: no posture model, medical conclusion or alarm exists in this implementation.
+初期統合ではベッドROIを明示的に切り出し、部屋全体の識別ではなくROI内の意味として報告します。回転、ミラー、
+アスペクト比は注釈付き画像で確認してからROIを使います。現状は画像全体を使い、ROIは未実装です。取得時刻はUVC
+コールバックで取り、推論開始時刻ではありません。ストリーム世代により、切断前の推論結果が再接続後に公開されません。
+UVCはアプリケーションの生存期間中に所有し、RTSPのTEARDOWNではAIキャプチャを止めません。MIPIフォールバックはありません。
+
+## baby 1-class detector
+
+COCOクラス0を黙ってbabyへ置き換えず、独立して版管理する検出器アダプタを使います。現在のファームウェアは
+クラス数が80以外のモデルを意図的に拒否し、固定された標準モデルだけを選択します。
+
+babyモデルを有効にする場合は、CMakeのモデル選択、期待入力寸法、ヘッドshape、ラベル数/名前、対象クラス、
+来歴manifestを同時に変更します。保持テストセットによる評価なしに有効化しません。共有するのは `PresenceFilter` であり、
+モデル固有のデコーダ前提ではありません。養育者による誤検出を必ず測定します。
+
+## 姿勢ステージ
+
+将来の契約は、baby ROI → 分類器 → `{supine, not_supine, unknown}` です。信頼度、画質、取得時刻、モデルハッシュ、
+拒否理由を含めます。babyがない、隠れ、ブレ、複数で曖昧、分布外、古いcrop、信頼度不足では分類しません。
+`unknown` は仰向けではありません。`not_supine` はうつ伏せ/横向きなどを注釈ガイドで厳密に定義し、監査用の下位ラベルを残します。
+人物ボックスの縦横比から姿勢を推測しません。
+
+これは将来の契約だけであり、姿勢モデル、医療的結論、アラーム機能は実装されていません。

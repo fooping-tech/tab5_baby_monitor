@@ -1,34 +1,26 @@
-# Camera Clock and hardware acceptance
+# Camera Clock画面と実機受入
 
-The native portrait display is 720x1280. The top 720x640 area displays
-aspect-fitted USB images; the lower dark/cyan panel displays local time and
-person-presence status. Posture remains unknown. A disconnected or stale
-camera clears the preview. The preview is an independent, approximately
-5 Hz consumer and never borrows UVC buffers across decoding.
+ネイティブ縦画面は720x1280です。上部720x640にアスペクト比を保ったUSB映像、下部の濃紺/水色パネルに
+ローカル時刻と人物在室状態を表示します。姿勢は常に `unknown` です。カメラが切断または古くなるとプレビューを消します。
+プレビューは独立した約5Hzの消費者で、復号をまたいでUVCバッファを借用しません。
 
-Layout/colors and the generated camera_clock_font_64.c and
-camera_clock_time_88.c fonts are ported from tab5_rtsp_logger revision
-e5e5fee79c2232bd5de4a994d8f90e12f4630952, app/apps/app_baby_logger.
-The upstream MIT notice is retained in licenses/tab5_rtsp_logger-MIT.txt.
-This does not import the full launcher, storage or Home Assistant application.
-The pinned upstream BSP handles LCD identification, touch and both IO expanders.
+レイアウト、色、生成済みフォント `camera_clock_font_64.c` と `camera_clock_time_88.c` は
+`tab5_rtsp_logger` revision `e5e5fee79c2232bd5de4a994d8f90e12f4630952` の
+`app/apps/app_baby_logger` から移植しました。上流MIT通知は
+`licenses/tab5_rtsp_logger-MIT.txt` に保持します。ランチャー、保存、Home Assistantアプリケーション全体は移植しません。
+固定した上流BSPがLCD識別、タッチ、2つのIO expanderを処理します。
 
-Time is synchronized by SNTP when the RTSP network is enabled, using JST.
-Until synchronization the display explicitly indicates an unsynchronized clock;
-offline RTC initialization is not yet ported.
+RTSPネットワークが有効なとき、SNTPでJSTへ同期します。同期待ちは未同期時計を明示表示します。オフラインRTC初期化は未移植です。
 
-## Evidence gates
+## 受入手順
 
-1. Host tests and IDF build: compilation is not hardware proof.
-2. Identify exact chip/MAC/port and privately back up flash before replacement.
-3. Record application SHA256, flash verification and boot/reset serial output.
-4. Confirm physical display, colors and orientation with an attended observation.
-5. Check fresh USB frames and independent AI, preview and RTSP operation.
-6. Decode RTSP over TCP without recording private imagery; reconnect once.
-7. Run at least one real elapsed hour while collecting serial and decoder logs.
-   Record decoded frames, errors, resets, heap trend and test conditions.
+1. ホストテストとIDFビルドを実行する。これは実機の証明ではない。
+2. 正確なchip/MAC/ポートを識別し、置換前にflashを私有バックアップする。
+3. アプリケーションSHA256、フラッシュ検証、起動/リセットのシリアルログを保存する。
+4. 立会いで表示、色、向きを確認する。
+5. 新しいUSBフレームとAI、プレビュー、RTSPが独立に動くことを確認する。
+6. 私有映像を記録せずTCP RTSPをデコードし、少なくとも1回再接続する。
+7. シリアルと復号ログを収集して、実時間で1時間以上動かす。復号フレーム、エラー、reset、heap傾向、条件を記録する。
 
-Keep flash backups, Wi-Fi configuration, serial logs and any camera imagery
-outside Git. A successful soak does not establish baby-detection accuracy or
-sleep safety. Scrypted/HomeKit and intentional watchdog fault injection remain
-separate acceptance tests.
+flash backup、Wi-Fi設定、シリアルログ、カメラ画像はGit外に保管します。成功した長時間試験でもbaby検出精度や睡眠安全性は証明されません。
+Scrypted/HomeKitと意図的なウォッチドッグ障害注入は独立した受入項目です。

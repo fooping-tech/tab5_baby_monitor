@@ -1,9 +1,79 @@
-# Tab5 Baby Edge AI (AGPL research PoC)
+# Tab5 Baby Edge AI（AGPL研究用PoC）
 
 ESP32-P4 / M5Stack Tab5 向けの人物検出・在室推定の初期実装です。
-**USB UVCカメラ取得・YOLO26n人物推論・H.264 RTSP配信を統合したPoCです。実機動作は未検証です。**
+**USB UVCカメラ取得・YOLO26n人物推論・H.264 RTSP配信を統合したPoCです。**
 person は大人も含み、赤ちゃんの識別ではありません。`absent` は検出証拠がないという推定であり、空室の保証ではありません。
 呼吸・窒息・SIDS・睡眠の安全性を判定するものではなく、見守りや医療機器の代替に使用しないでください。
+
+## Get Started
+
+初めて試す場合は、次の順番で進めます。モデル作成、PCテスト、Tab5実機テストは別の受入項目です。
+特に、学習やビルドの成功だけで実機の映像・RTSP・精度・長時間安定性が確認できたことにはなりません。
+
+### 1. まずPC上のテストを実行する
+
+モデル、カメラ、Tab5がなくても実行できます。
+
+```sh
+git clone https://github.com/fooping-tech/tab5_baby_edge_ai_agpl.git
+cd tab5_baby_edge_ai_agpl
+cmake -S . -B build
+cmake --build build
+ctest --test-dir build --output-on-failure
+python3 -m unittest discover -s tests -p 'test_*.py'
+python3 tools/evaluate_presence.py tests/fixtures/presence.csv
+```
+
+これは在室状態フィルター、RTSPフレーミング、画像変換、評価集計の自動テストです。カメラ入力、
+YOLO精度、RTSP再生、画面、長時間運転の証明にはなりません。
+
+### 2. 赤ちゃん検出モデルを作成する（任意）
+
+現在の標準ファームウェアはCOCOの `person` 検出モデルです。赤ちゃんだけを検出するモデルを作る場合は、
+私有データセットを用意し、[学習からTab5推論まで](docs/training_and_inference.md) の手順で進めます。
+
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements-training.txt
+yolo detect train model=yolo26n.pt data=/private/baby.yaml imgsz=512 epochs=100 batch=8 seed=42 \
+  project=/private/tab5-artifacts/train name=baby_v1
+yolo detect val model=/private/tab5-artifacts/train/baby_v1/weights/best.pt \
+  data=/private/baby.yaml split=test imgsz=512
+```
+
+学習済みの `best.pt` をそのままTab5へコピーしても動きません。ESP-DLでの量子化・`.espdl`変換と、
+1クラスモデルを受けるファームウェアアダプタの変更が必要です。
+
+### 3. Tab5で初めて動かす
+
+Tab5、USB UVCカメラ、安定電源、ESP-IDF v5.4.2、ESP32-P4ツールチェーンを用意します。
+書き込み前に対象ポート、既存ファームウェア、Wi-Fi設定の保管先を確認してください。
+
+```sh
+mkdir -p third_party
+git clone https://github.com/espressif/esp-dl.git third_party/esp-dl
+git -C third_party/esp-dl checkout 5d9c36063dddbe98b5387828c831d6bbadb1370f
+git clone https://github.com/fooping-tech/tab5_rtsp_logger.git third_party/tab5_rtsp_logger
+git -C third_party/tab5_rtsp_logger checkout e5e5fee79c2232bd5de4a994d8f90e12f4630952
+export ESP_DL_PATH="$(pwd)/third_party/esp-dl"
+export TAB5_REFERENCE_PATH="$(pwd)/third_party/tab5_rtsp_logger"
+cd firmware
+idf.py set-target esp32p4
+idf.py menuconfig
+idf.py build
+```
+
+`Tab5 Edge AI` でWi-FiのSSID/パスワードを設定し、RTSPを使う場合だけ `Expose unauthenticated RTSP on trusted LAN` を有効にします。
+書き込みは手動承認後に行います。
+
+```sh
+idf.py -p /dev/your-confirmed-port flash monitor
+```
+
+USBカメラのストリーム開始、画面の向き、`unknown` への失敗時遷移、RTSP TCP再生を個別に確認します。
+RTSP URL は `rtsp://tab5.local:8554/baby`、転送方式はTCPです。実機テストの詳細は
+[実機テストと受入条件](docs/evaluation.md) を参照してください。
 
 ## 実装範囲
 
@@ -19,7 +89,7 @@ person は大人も含み、赤ちゃんの識別ではありません。`absent
 | baby 1-class detector | 学習・変換手順のみ。重みなし |
 | supine / not_supine / unknown | 拡張契約のみ。出力は常にunknown |
 
-## ホストテスト（モデル・画像不要）
+## 自動テスト（モデル・画像不要）
 
 ```sh
 cmake -S . -B build
@@ -29,10 +99,10 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 python3 tools/evaluate_presence.py tests/fixtures/presence.csv
 ```
 
-## ESP32-P4ビルド
+## ESP32-P4ビルドの詳細
 
 ESP-IDF **v5.4.2** とP4ツールチェーンをインストールし、その環境を有効にしてください。
-Tab5の16MB flash / PSRAMを前提とします。LCDは初期化せず、USBとWLAN電源のみボード設定を行います。
+Tab5の16MB flash / PSRAMを前提とします。USB、WLAN、ネイティブ縦画面を初期化します。
 USB Serial/JTAGをログ出力先とし、watchdogは無効化していません。実際のハードウェアでのタイミング調整は別途必要です。
 
 ```sh
@@ -80,12 +150,12 @@ USBモードではAIワーカーが最新画像だけを処理し、別の状態
 
 - `core/presence.hpp`: 独立した時間フィルター（入力閾値0.5、入室2秒、退室5秒、鮮度10秒）。値は未調整のPoC既定値。
 - `firmware/main/detector.*`: 公式ESP-DL前後処理、COCO80モデル契約、借用RGB888フレーム境界。
-- [データ収集・学習・量子化](docs/model_pipeline.md)
-- [学習からTab5推論まで](docs/training_and_inference.md)
-- [カメラ・baby・姿勢の拡張契約](docs/architecture.md)
+- [Get Started: 学習からTab5推論まで](docs/training_and_inference.md)
+- [データ収集・学習・量子化の詳細](docs/model_pipeline.md)
+- [設計とbaby/姿勢拡張の契約](docs/architecture.md)
 - [USB/RTSP統合・移植元・実機確認](docs/usb_rtsp.md)
 - [Camera Clock画面・実機試験条件](docs/ui_hardware.md)
-- [評価と実機受入](docs/evaluation.md)
+- [実機テストと受入条件](docs/evaluation.md)
 - [依存とライセンス](docs/dependencies.md)、[実施記録](PLANS.md)
 
 ## ライセンス

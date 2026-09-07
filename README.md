@@ -19,8 +19,8 @@ RTSPは平文かつ認証なしです。信頼できるLAN内でのみ有効に�
 Tab5やカメラがなくても実行できます。
 
 ```sh
-git clone https://github.com/fooping-tech/tab5_baby_edge_ai_agpl.git
-cd tab5_baby_edge_ai_agpl
+git clone https://github.com/fooping-tech/tab5_baby_monitor.git
+cd tab5_baby_monitor
 cmake -S . -B build
 cmake --build build
 ctest --test-dir build --output-on-failure

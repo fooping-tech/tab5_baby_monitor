@@ -6,7 +6,9 @@
 - Never commit identifiable images, recordings, credentials or private capture paths.
   Wi-Fi credentials belong in `firmware/sdkconfig.local`, which is git-ignored.
 - This firmware does not classify people or scenes. It captures, displays and streams video and
-  shows the local time. Do not describe it as a monitor, a detector or a safety device.
+  shows the local time. Never claim it detects, identifies or watches anyone, and never present it
+  as a safety, medical or alarm device: it raises no alerts and a stalled stream looks the same as
+  a quiet room.
 - Errors and stale input must show as unknown or blank the preview, never as a stale picture
   presented as live.
 - Host tests, IDF build, device flash, live camera capture, RTSP playback and endurance are

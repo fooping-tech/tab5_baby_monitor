@@ -2,7 +2,7 @@
 
 ## ハードウェアJPEGデコーダの共有
 
-ESP32-P4のハードウェアJPEGエンジンは1基です。RTSP、画面プレビュー、人物検出は同じUVCフレームを
+ESP32-P4のハードウェアJPEGエンジンは1基です。RTSP、画面プレビュー、映像取得は同じUVCフレームを
 それぞれ復号していたため、640x480では1回あたり約57msを占有するエンジンに毎秒約20回の要求が集中し、
 実測の飽和点（約17回/秒）を超えていました。プレビューの `jpeg_decoder_process()` 呼び出しは
 200ms周期に対して133〜195msブロックし、表示は1.47fpsまで落ち、「最新フレームが古い」判定で
@@ -66,36 +66,35 @@ USBのアイソクロナスURBは `CONFIG_TAB5_UVC_URB_COUNT`（既定12）と `
 - 外部参照component: esp_video 0.7.0、esp_cam_sensor 0.7.1、esp_sccb_intf（すべて参照SHAで固定）。H.264 video deviceだけを有効にし、MIPI/DVP/ISPは無効にする。
 
 参照MIT通知は [licenses/tab5_rtsp_logger-MIT.txt](../licenses/tab5_rtsp_logger-MIT.txt) に保持します。元のSPDX通知も移植元に残します。
-アプリケーション全体はAGPL-3.0-onlyです。これは上流componentの再ライセンスや、リンクされたコードとの法的分離を意味しません。
+アプリケーション全体はMITです。これは上流componentの再ライセンスや、リンクされたコードとの法的分離を意味しません。
 
 ## データフローと制限
 
-USB要求は640x480 @15fps、MJPEG優先・YUY2代替、アプリケーション生存期間中のcaptureです。callbackは最大2MiBを
-PSRAMの3スロットの一つへコピーし、busy slotなら無制限キューを作らずdropします。AIとRTSPはそれぞれ独自コピーを持ちます。
-AIは報告/JPEG寸法を検査し、入力年齢を1秒以下に制限します。status loopは10秒で証拠を失効し、切断またはstream generation
-変更を観測したら直ちにresetします。姿勢は常に `unknown` です。
+USB要求は640x480 @15fps、MJPEG優先・YUY2代替、アプリケーション生存期間中のcaptureです。callbackはフレームを
+PSRAMの3スロットの一つへコピーし、busy slotなら無制限キューを作らずdropします。スロットの大きさは
+`HAL_UVC_MAX_FRAME_BYTES`（幅×高さ×2、非圧縮YUY2の上限）です。プレビューとRTSPはそれぞれ独自コピーを持ちます。
+プレビューは `CONFIG_TAB5_PREVIEW_MAX_AGE_MS` を超えた映像を表示せず、画面を消します。
 
 RTSPは同時1クライアント、H.264 payload type 96、port 8554のTCP interleaved RTP/RTCP、path `/baby` をサポートします。
 UDP RTP、認証、TLS、複数クライアントfanoutはありません。設定されたcapture寸法に収まらないfallback formatは使えません。
-正確な設定解像度を広告するカメラを使います。名目FPSは測定済みthroughputではありません。YOLO26推論、JPEG復号、RTSP変換は
+正確な設定解像度を広告するカメラを使います。名目FPSは測定済みthroughputではありません。プレビュー、JPEG復号、RTSP変換は
 P4 core、メモリ帯域、PSRAMを競合します。メモリ/stack枯渇や上流コード内のwatchdog abortは、実機試験を完了するまで起き得ます。
 
 ## 初回の安全な設定
 
-1. `idf.py menuconfig` でUSB入力（既定）を有効にする。ローカル推論だけならRTSPはoffのままにする。
+1. `idf.py menuconfig` でRTSPを使う場合のみ `EDGE_ENABLE_RTSP` を有効にする。画面表示だけならoffのままにする。
 2. RTSPには私有LANのSSID/パスワードを設定し、明示的なRTSP switchを有効にする。画像アップロードや外部サービスは使わない。
 3. build後、対象Tab5のport、board、電源を確認してから手動でflashを承認する。USB-Aへ対応カメラを接続し、Tab5とカメラに十分な安定電源を使う。
-4. serialにUVC negotiated/streaming、AI sequence/score/latency、presence/statusが出ることを確認する。DHCP IPを確認し、`rtsp://tab5.local:8554/baby`（またはログのIP）を使う。
+4. serialにUVC negotiated/streaming、preview_framesの増加、SNTP適用が出ることを確認する。DHCP IPを確認し、`rtsp://tab5.local:8554/baby`（またはログのIP）を使う。
 5. 転送方式はTCPを選び、port 8554を公開しない。認証情報とbuild artifactは私有扱いにする。
 6. このbuildはNVS partitionを含むため既存flash layoutを確認し、NVSを自動消去しない。
 
 ## 受入チェックリスト
 
 - UVC enumerationと連続した新しいsequence。MJPEG/YUY2別に回転/色を確認する。
-- 既知の立会い場面、人物なしnegative、長い推論中の抜線/reset/replugでAI state transitionを確認する。
-- LAN上のRTSP OPTIONS/DESCRIBE/SETUP/PLAY、SPS/PPS/IDR、H.264 decodeを確認し、client disconnectでAIが停止しないことを確認する。
-- PLAY中の再接続/遅いclient/RTCP/camera抜線で、以前のgenerationの古いAI結果を出さないことを確認する。
-- 推論+配信の遅延/FPS、internal/PSRAM free block最小値、task stack HWM、dropを測る。
-- AI+RTSPの立会い1時間試験、その後の延長試験を行う。Scrypted/HomeKitは別検証にする。
+- LAN上のRTSP OPTIONS/DESCRIBE/SETUP/PLAY、SPS/PPS/IDR、H.264 decodeを確認し、client disconnectで画面表示が止まらないことを確認する。
+- PLAY中の再接続/遅いclient/RTCP/camera抜線で、以前のgenerationの古い映像を出さないことを確認する。
+- 配信の遅延/FPS、プレビューのfps/blanked、internal/PSRAM free block最小値、task stack HWM、dropを測る。
+- プレビュー+RTSPの立会い1時間試験、その後の延長試験を行う。Scrypted/HomeKitは別検証にする。
 
 自動buildとframing testだけでは実機gateを完了しません。観測済みの事実は [PLANS.md](../PLANS.md) を参照してください。

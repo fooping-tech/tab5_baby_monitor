@@ -36,7 +36,6 @@ std::atomic<uint32_t> preview_borrowed{0};       // reused the RTSP pipeline's d
 // RGB888 comes from our own decode, BGR888 from the RTSP pipeline's.
 enum class SourcePixels { Rgb888, Bgr888 };
 std::atomic<bool> usb_live{false};
-std::atomic<const char *> presence_text{"unknown"};
 constexpr size_t payload_capacity = 1024 * 1024;
 constexpr int64_t kPreviewMaxAgeUs = CONFIG_TAB5_PREVIEW_MAX_AGE_MS * 1000LL;
 // A frame is only put on screen while it is comfortably inside the age limit,
@@ -90,9 +89,8 @@ void update_labels(lv_timer_t *)
         lv_label_set_text(weekday_label, kWeekdayPlaceholder);
         lv_label_set_text(clock_label, kTimePlaceholder);
     }
-    lv_label_set_text_fmt(status_label, "USB // %s\nPERSON // %s\nPOSTURE // unknown\nCLOCK // %s",
+    lv_label_set_text_fmt(status_label, "USB // %s\nCLOCK // %s",
                           usb_live.load(std::memory_order_relaxed) ? "LIVE" : "OFFLINE",
-                          presence_text.load(std::memory_order_relaxed),
                           edge_clock_is_synchronized() ? "NTP" : (digits_are_real ? "RTC-ONLY" : "UNSET"));
 }
 
@@ -316,8 +314,8 @@ esp_err_t edge_ui_start()
     lv_obj_set_pos(clock_label, 8, 850);
     lv_obj_set_width(clock_label, 704);
     lv_obj_set_style_text_font(clock_label, &lv_font_camera_clock_time_88, 0);
-    status_label = label(root, 1050, "AI // unknown", 0x65F5FF);
-    label(root, 1192, "TAB5 // CAMERA CLOCK - EDGE AI PoC", 0xD83AAE);
+    status_label = label(root, 1050, "USB // OFFLINE", 0x65F5FF);
+    label(root, 1192, "TAB5 // CAMERA CLOCK", 0xD83AAE);
     lv_timer_create(update_labels, 1000, nullptr);
     update_labels(nullptr);
     bsp_display_unlock();
@@ -332,7 +330,7 @@ esp_err_t edge_ui_start()
                               MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
 }
 
-void edge_ui_status(const char *presence)
+void edge_ui_status()
 {
     ESP_LOGI("edge_ui",
              "preview_frames=%lu no_new=%lu too_old=%lu decode_failed=%lu blanked=%lu "
@@ -347,5 +345,4 @@ void edge_ui_status(const char *presence)
              static_cast<unsigned long>(edge_jpeg_decode_failures.load()),
              static_cast<unsigned long>(preview_borrowed.load()));
     usb_live.store(hal_uvc_is_streaming(), std::memory_order_relaxed);
-    presence_text.store(presence, std::memory_order_relaxed);
 }

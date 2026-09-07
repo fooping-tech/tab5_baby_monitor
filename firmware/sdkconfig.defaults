@@ -8,12 +8,19 @@ CONFIG_IDF_EXPERIMENTAL_FEATURES=y
 # CONFIG_CODEC_I2C_BACKWARD_COMPATIBLE is not set
 CONFIG_CACHE_L2_CACHE_256KB=y
 CONFIG_CACHE_L2_CACHE_LINE_128B=y
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=32768
+# app_main() now only starts the camera, UI and network services and then
+# polls once a second, so it does not need the 32 KiB the still-image
+# inference path used to require.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 CONFIG_SPIRAM_XIP_FROM_PSRAM=y
-CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
+# Allocations above this size are served from PSRAM by default. A task stack
+# that lands there fails xPortcheckValidStackMem() and aborts startup with
+# "assert failed: xTaskCreateStaticPinnedToCore". Keep the threshold above the
+# stack sizes the SDIO/Wi-Fi transport creates statically during init.
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
 CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=4096
 CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE=4096
 CONFIG_USB_HOST_HW_BUFFER_BIAS_IN=y

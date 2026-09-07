@@ -82,6 +82,8 @@ void infer(void *argument)
 
 void edge_live_start(const unsigned char *model_data)
 {
+    // Before the UI or any logging formats local time.
+    edge_clock_init();
     ESP_ERROR_CHECK(edge_board_start());
     ESP_ERROR_CHECK(hal_uvc_init() ? ESP_OK : ESP_FAIL);
     ESP_ERROR_CHECK(hal_uvc_start() ? ESP_OK : ESP_FAIL);
@@ -96,7 +98,14 @@ void edge_live_start(const unsigned char *model_data)
     ESP_ERROR_CHECK(edge_jpeg_decoder_start());
     ESP_ERROR_CHECK(edge_ui_start());
     ESP_ERROR_CHECK(edge_network_start());
-    if (xTaskCreateWithCaps(infer, "edge_ai", 12 * 1024, const_cast<unsigned char *>(model_data), 2,
+    // Priority 1, below the preview consumer: one yolo26n pass is a single
+    // non-preemptible ESP-DL call of 2.4-7.0 s and the interval between passes
+    // is only 1 s, so this task is busy roughly 80% of the time. At equal
+    // priority it starved the 5 Hz preview into blanking the camera image.
+    // The interval stays at 1 s because PresenceFilter resets when frames fall
+    // more than stale_ms (10 s) apart, and a slow pass plus a longer pause
+    // would cross that. Left unpinned: core 1 belongs to the camera tasks.
+    if (xTaskCreateWithCaps(infer, "edge_ai", 12 * 1024, const_cast<unsigned char *>(model_data), 1,
                             nullptr, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) != pdPASS) {
         ESP_LOGE("edge_ai", "AI task unavailable; presence remains unknown");
     }

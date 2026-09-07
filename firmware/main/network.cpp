@@ -11,6 +11,7 @@
 #include "esp_log.h"
 #include "mdns.h"
 #include "esp_netif_sntp.h"
+#include "esp_sntp.h"
 #include <cstdlib>
 #include <ctime>
 #include <initializer_list>
@@ -24,7 +25,14 @@ static bool s_wifi_sta_netif_started = false;
 std::atomic<bool> connecting{false};
 bool mdns_started = false;
 bool clock_started = false;
+std::atomic<bool> clock_synchronized{false};
 int retries = 0;
+
+void sntp_synchronized(struct timeval *received)
+{
+    clock_synchronized.store(true, std::memory_order_release);
+    ESP_LOGI(TAG, "SNTP time applied: epoch=%lld", static_cast<long long>(received->tv_sec));
+}
 static void wifi_remote_sta_start_handler(void* arg, esp_event_base_t base, int32_t event_id, void* data)
 {
     auto* netif = static_cast<esp_netif_t*>(arg);
@@ -123,25 +131,24 @@ void events(void *arg, esp_event_base_t base, int32_t event_id, void *data)
     } else if (base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         retries = 0;
         if (!clock_started) {
-            clock_started = true;
-            xTaskCreate([](void *) {
-                setenv("TZ", "JST-9", 1);
-                tzset();
-                esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
-                config.start = true;
-                const esp_err_t started = esp_netif_sntp_init(&config);
-                if (started != ESP_OK && started != ESP_ERR_INVALID_STATE) {
-                    ESP_LOGW(TAG, "SNTP init failed: %s", esp_err_to_name(started));
-                    clock_started = false;
-                    vTaskDelete(nullptr);
-                    return;
-                }
-                const esp_err_t synced = esp_netif_sntp_sync_wait(pdMS_TO_TICKS(12000));
-                ESP_LOGI(TAG, "SNTP synchronization: %s", esp_err_to_name(synced));
-                esp_netif_sntp_deinit();
-                clock_started = false;
-                vTaskDelete(nullptr);
-            }, "edge_sntp", 4096, nullptr, 4, nullptr);
+            // Keep the SNTP client resident instead of tearing it down after
+            // the first answer. The ESP32-P4 RTC drifts by minutes over a long
+            // run, and a one-shot sync leaves the displayed clock wrong until
+            // the next reboot. TZ is applied by edge_clock_init() before the
+            // UI starts, so no task sets it while another reads local time.
+            esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG(CONFIG_EDGE_SNTP_SERVER);
+            config.start = true;
+            config.sync_cb = sntp_synchronized;
+            const esp_err_t started = esp_netif_sntp_init(&config);
+            if (started != ESP_OK && started != ESP_ERR_INVALID_STATE) {
+                ESP_LOGW(TAG, "SNTP init failed: %s", esp_err_to_name(started));
+            } else {
+                clock_started = true;
+                esp_sntp_set_sync_interval(CONFIG_EDGE_SNTP_RESYNC_MINUTES * 60 * 1000);
+                esp_sntp_restart();
+                ESP_LOGI(TAG, "SNTP client running: server=%s resync=%dmin",
+                         CONFIG_EDGE_SNTP_SERVER, CONFIG_EDGE_SNTP_RESYNC_MINUTES);
+            }
         }
         if (!mdns_started && mdns_init() == ESP_OK) {
             mdns_hostname_set(CONFIG_EDGE_HOSTNAME);
@@ -153,6 +160,18 @@ void events(void *arg, esp_event_base_t base, int32_t event_id, void *data)
         ESP_ERROR_CHECK(rtsp_server_start());
     }
 }
+}
+
+void edge_clock_init()
+{
+    setenv("TZ", CONFIG_EDGE_TIMEZONE, 1);
+    tzset();
+    ESP_LOGI(TAG, "local timezone set to %s", CONFIG_EDGE_TIMEZONE);
+}
+
+bool edge_clock_is_synchronized()
+{
+    return clock_synchronized.load(std::memory_order_acquire);
 }
 
 esp_err_t edge_network_start()

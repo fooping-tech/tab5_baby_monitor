@@ -11,6 +11,15 @@
 
 #ifdef __cplusplus
 extern "C" {
+
+// The largest a frame can be is the uncompressed YUY2 picture; an MJPEG frame
+// of the same picture is always smaller, and this matches the camera's own
+// dwMaxVideoFrameBufSize. The previous flat 2 MiB over-reserved 6 MiB across
+// the HAL's three slots and another 2 MiB in RTSP, and RTSP's free/realloc on
+// every client connect left the PSRAM heap with a hole of exactly 2 MiB, so
+// the next 2 MiB request failed with "largest=2097152".
+#define HAL_UVC_MAX_FRAME_BYTES ((size_t)CONFIG_TAB5_UVC_WIDTH * (size_t)CONFIG_TAB5_UVC_HEIGHT * 2u)
+
 #endif
 
 // Initializes the UVC client on top of the USB Host library installed by the

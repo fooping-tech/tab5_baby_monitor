@@ -28,6 +28,7 @@
 #include "esp_video_device.h"
 #include "esp_video_init.h"
 #include "hal/hal_uvc.h"
+#include "jpeg_decoder.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
 #include "freertos/task.h"
@@ -35,12 +36,48 @@
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
 #include "rtsp_framing.h"
+#include "live_services.hpp"
 
 #ifndef MAP_FAILED
 #define MAP_FAILED ((void *)-1)
 #endif
 
 namespace {
+
+// CONFIG_FREERTOS_HZ is 100, so pdMS_TO_TICKS() rounds every delay under 10 ms
+// down to zero ticks, and vTaskDelay(0) only yields to tasks of equal or
+// higher priority. This task runs at priority 5 on the core that also serves
+// Wi-Fi and USB, so the sub-tick waits below were busy spins: they held the
+// core at 100%, starved IDLE0 and tripped the task watchdog roughly once every
+// five seconds. Always block for at least one tick.
+static inline void rtsp_delay_ms(uint32_t milliseconds)
+{
+    const TickType_t ticks = pdMS_TO_TICKS(milliseconds);
+    vTaskDelay(ticks > 0 ? ticks : 1);
+}
+
+std::atomic<uint32_t> s_usb_truncated_frames{0};
+
+// The RGB888 frame this pipeline last decoded, offered to the preview and the
+// detector so the one hardware JPEG engine runs each frame once instead of
+// three times. Guarded by a mutex that is also held across the decode, so a
+// borrower cannot observe a buffer being overwritten.
+SemaphoreHandle_t decoded_frame_mutex()
+{
+    static SemaphoreHandle_t mutex = xSemaphoreCreateMutex();
+    return mutex;
+}
+hal_uvc_frame_info_t s_decoded_info = {};
+bool s_decoded_valid = false;
+
+// Releases the decoded-frame mutex on every exit path of the decode function.
+struct DecodedFrameGuard {
+    SemaphoreHandle_t mutex;
+    explicit DecodedFrameGuard(SemaphoreHandle_t m) : mutex(m) {}
+    ~DecodedFrameGuard() { if (mutex) xSemaphoreGive(mutex); }
+    DecodedFrameGuard(const DecodedFrameGuard &) = delete;
+    DecodedFrameGuard &operator=(const DecodedFrameGuard &) = delete;
+};
 
 constexpr char kTag[]                  = "rtsp";
 constexpr uint16_t kRtspPort           = 8554;
@@ -62,7 +99,7 @@ constexpr int kEncoderMinQp            = 20;
 constexpr int kEncoderMaxQp            = 35;
 constexpr uint32_t kMipiWidth          = 1280;
 constexpr uint32_t kMipiHeight         = 720;
-constexpr size_t kMaxUsbFrameBytes     = 2 * 1024 * 1024;
+constexpr size_t kMaxUsbFrameBytes     = HAL_UVC_MAX_FRAME_BYTES;
 constexpr size_t kUsbRgb888Bytes       = static_cast<size_t>(CONFIG_TAB5_UVC_WIDTH) *
                                           CONFIG_TAB5_UVC_HEIGHT * 3;
 constexpr size_t kUsbYuv420Bytes       = (static_cast<size_t>(CONFIG_TAB5_UVC_WIDTH) *
@@ -386,10 +423,14 @@ static bool prepare_usb_source_buffers()
     }
 
     // The RGB888 conversion plus P4 JPEG DMA can exceed 100 ms at 640x480
-    // under Preview + RTSP load.  A timeout here is a frame-level failure,
-    // not a reason to tear down the H.264 pipeline; allow the bounded frame
-    // retry path enough time to receive a complete decode.
-    const jpeg_decode_engine_cfg_t engine = {.intr_priority = 0, .timeout_ms = 500};
+    // under Preview + RTSP load.  A timeout here is not a frame-level failure
+    // we can shrug off: the driver reacts by calling dma2d_force_end() on a
+    // transaction that has not finished, and the shared 2D-DMA state it
+    // leaves behind aborts the device with "assert failed: spinlock_release".
+    // Wait long enough that a decode queued behind the display's own 2D-DMA
+    // traffic still completes.
+    const jpeg_decode_engine_cfg_t engine = {.intr_priority = 0,
+                                             .timeout_ms = CONFIG_TAB5_JPEG_DECODE_TIMEOUT_MS};
     if (jpeg_new_decoder_engine(&engine, &s_usb_jpeg_decoder) != ESP_OK) {
         ESP_LOGE(kTag, "USB RTSP JPEG decoder initialization failed");
         free_usb_source_buffers();
@@ -427,7 +468,7 @@ static bool copy_usb_frame(hal_uvc_frame_info_t *info)
         if (!hal_uvc_is_streaming()) {
             return false;
         }
-        vTaskDelay(pdMS_TO_TICKS(2));
+        rtsp_delay_ms(2);
     }
     ESP_LOGW(kTag, "USB RTSP frame wait timed out after sequence=%" PRIu32, s_usb_sequence);
     return false;
@@ -470,6 +511,20 @@ static bool decode_usb_mjpeg_to_yuv420(const hal_uvc_frame_info_t &info)
 {
     if (s_usb_jpeg_decoder == nullptr || s_usb_rgb888 == nullptr || s_usb_yuv420 == nullptr ||
         info.width != s_width || info.height != s_height) {
+        return false;
+    }
+    SemaphoreHandle_t mutex = decoded_frame_mutex();
+    if (mutex != nullptr && xSemaphoreTake(mutex, portMAX_DELAY) != pdTRUE) {
+        return false;
+    }
+    const DecodedFrameGuard guard(mutex);
+    // s_usb_rgb888 is about to be overwritten; no borrower may treat the
+    // previous contents as current from here on.
+    s_decoded_valid = false;
+    if (!edge_jpeg_payload_is_complete(s_usb_input, info.bytes)) {
+        // A truncated frame would stall the hardware decoder for its whole
+        // timeout and leave the shared 2D-DMA transaction half-torn down.
+        s_usb_truncated_frames.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
     jpeg_decode_picture_info_t picture = {};
@@ -544,6 +599,8 @@ static bool decode_usb_mjpeg_to_yuv420(const hal_uvc_frame_info_t &info)
             s_usb_yuv420[odd_destination + 2] = y11;
         }
     }
+    s_decoded_info = info;
+    s_decoded_valid = true;
     return true;
 }
 
@@ -699,7 +756,7 @@ static EncodeResult encode_frame(const uint8_t** encoded, size_t* encoded_size, 
             // UVC broker for a newer payload instead of decoding the same bytes.
             s_usb_sequence = info.sequence;
             if (attempt + 1 < kUsbConversionRetryCount) {
-                vTaskDelay(pdMS_TO_TICKS(2));
+                rtsp_delay_ms(2);
             }
         }
         if (!converted) {
@@ -768,7 +825,7 @@ static EncodeResult encode_frame(const uint8_t** encoded, size_t* encoded_size, 
                 record_encoder_timeout();
                 return EncodeResult::Failed;
             }
-            vTaskDelay(pdMS_TO_TICKS(1));
+            rtsp_delay_ms(1);
         }
         s_usb_sequence = info.sequence;
         *encoded = s_encoder_buffers[encoded_buffer.index].data;
@@ -1150,7 +1207,7 @@ static bool prime_parameter_sets(void)
         const EncodeResult encode_result = encode_frame(&encoded, &encoded_size, &encoded_index);
         if (encode_result == EncodeResult::Dropped) {
             ESP_LOGW(kTag, "H.264 prime frame dropped on attempt %d", attempt + 1);
-            vTaskDelay(pdMS_TO_TICKS(2));
+            rtsp_delay_ms(2);
             continue;
         }
         if (encode_result == EncodeResult::Failed) {
@@ -1186,7 +1243,7 @@ static bool prime_parameter_sets(void)
         if (has_parameter_sets && has_idr) {
             return true;
         }
-        vTaskDelay(pdMS_TO_TICKS(2));
+        rtsp_delay_ms(2);
     }
     ESP_LOGE(kTag, "H.264 stream did not provide SPS/PPS");
     return false;
@@ -1272,7 +1329,7 @@ static void handle_client(int client_fd)
             // Do not continue here. RTSP/TCP clients normally have no text
             // request to read while PLAY is active, so the frame scheduler
             // below must also run when recv() produced no complete input.
-            vTaskDelay(pdMS_TO_TICKS(1));
+            rtsp_delay_ms(1);
         } else if (input.type == tab5::rtsp::InputFrameType::Interleaved) {
             // The parser has isolated binary RTCP/RTP data before any text
             // search. Embedded zero bytes therefore cannot corrupt RTSP input.
@@ -1468,10 +1525,10 @@ static void handle_client(int client_fd)
                 }
                 next_frame_us = now + 1000000LL / CONFIG_TAB5_RTSP_FPS;
             } else {
-                vTaskDelay(pdMS_TO_TICKS(1));
+                rtsp_delay_ms(1);
             }
         } else {
-            vTaskDelay(pdMS_TO_TICKS(5));
+            rtsp_delay_ms(5);
         }
     }
 }
@@ -1483,7 +1540,7 @@ static void rtsp_task(void*)
         socklen_t address_length = sizeof(address);
         const int client_fd = accept(s_listen_fd, reinterpret_cast<struct sockaddr*>(&address), &address_length);
         if (client_fd < 0) {
-            vTaskDelay(pdMS_TO_TICKS(100));
+            rtsp_delay_ms(100);
             continue;
         }
         s_lifetime_connections.fetch_add(1, std::memory_order_relaxed);
@@ -1509,11 +1566,13 @@ static void rtsp_task(void*)
         close(client_fd);
         s_diag_active_client.store(false, std::memory_order_release);
         ESP_LOGI(kTag, "RTSP client disconnected bytes=%llu send_timeouts=%u send_socket_errors=%u "
-                 "encoder_timeouts=%u encoder_errors=%u usb_conversion_errors=%u rtcp=%u stack=%u",
+                 "encoder_timeouts=%u encoder_errors=%u usb_conversion_errors=%u truncated_mjpeg=%u "
+                 "rtcp=%u stack=%u",
                  static_cast<unsigned long long>(s_bytes_sent), static_cast<unsigned>(s_send_timeouts),
                  static_cast<unsigned>(s_send_socket_errors),
                  static_cast<unsigned>(s_encoder_timeouts), static_cast<unsigned>(s_encoder_errors),
                  static_cast<unsigned>(s_usb_conversion_errors),
+                 static_cast<unsigned>(s_usb_truncated_frames.load(std::memory_order_relaxed)),
                  static_cast<unsigned>(s_rtcp_packets),
                  static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
     }
@@ -1555,8 +1614,11 @@ extern "C" esp_err_t rtsp_server_start(void)
     constexpr uint32_t kRtspTaskStackBytes = 20 * 1024;
     constexpr UBaseType_t kExternalStackCaps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
     TaskHandle_t created_task = nullptr;
-    const BaseType_t task_result = xTaskCreateWithCaps(rtsp_task, "rtsp", kRtspTaskStackBytes, nullptr, 5, &created_task,
-                                                       kExternalStackCaps);
+    // Pinned to the core that already owns Wi-Fi, SDIO and the USB host so the
+    // inference and preview workers keep core 1 to themselves.
+    const BaseType_t task_result = xTaskCreatePinnedToCoreWithCaps(rtsp_task, "rtsp", kRtspTaskStackBytes, nullptr, 5,
+                                                                   &created_task, EDGE_SERVICE_CORE,
+                                                                   kExternalStackCaps);
     if (task_result != pdPASS) {
         ESP_LOGE(kTag, "RTSP task creation failed");
         close(s_listen_fd);
@@ -1570,6 +1632,37 @@ extern "C" esp_err_t rtsp_server_start(void)
     s_diag_server_started.store(true, std::memory_order_release);
     ESP_LOGI(kTag, "RTSP server started: rtsp://%s.local:%u/baby", CONFIG_EDGE_HOSTNAME, kRtspPort);
     return ESP_OK;
+}
+
+extern "C" bool rtsp_borrow_decoded_frame(uint32_t last_sequence, const uint8_t **rgb888,
+                                          hal_uvc_frame_info_t *info, uint32_t timeout_ms)
+{
+    if (rgb888 == nullptr || info == nullptr) {
+        return false;
+    }
+    SemaphoreHandle_t mutex = decoded_frame_mutex();
+    if (mutex == nullptr) {
+        return false;
+    }
+    const TickType_t ticks = pdMS_TO_TICKS(timeout_ms);
+    if (xSemaphoreTake(mutex, ticks > 0 ? ticks : 1) != pdTRUE) {
+        return false;
+    }
+    if (!s_decoded_valid || s_usb_rgb888 == nullptr || s_decoded_info.sequence == last_sequence) {
+        xSemaphoreGive(mutex);
+        return false;
+    }
+    *info = s_decoded_info;
+    *rgb888 = s_usb_rgb888;
+    return true;  // caller holds the mutex until rtsp_release_decoded_frame()
+}
+
+extern "C" void rtsp_release_decoded_frame(void)
+{
+    SemaphoreHandle_t mutex = decoded_frame_mutex();
+    if (mutex != nullptr) {
+        xSemaphoreGive(mutex);
+    }
 }
 
 extern "C" esp_err_t rtsp_server_prepare(void)

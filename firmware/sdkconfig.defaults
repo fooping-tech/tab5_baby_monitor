@@ -16,11 +16,15 @@ CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 CONFIG_SPIRAM_XIP_FROM_PSRAM=y
-# Allocations above this size are served from PSRAM by default. A task stack
-# that lands there fails xPortcheckValidStackMem() and aborts startup with
-# "assert failed: xTaskCreateStaticPinnedToCore". Keep the threshold above the
-# stack sizes the SDIO/Wi-Fi transport creates statically during init.
-CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
+# Allocations above this size go to PSRAM. Keep it small: during startup only
+# the first L2MEM region is available to the allocator (the region holding the
+# startup stack is marked startup_stack and joins the heap later), and on this
+# app that is about 63 KiB with roughly 50 KiB already spent by the time the
+# scheduler starts. Raising this to 16384 forced every sub-16 KiB allocation
+# into that region, left 13 KiB, and the FreeRTOS timer task's 2 KiB stack then
+# fell through to RTCRAM/TCM - neither of which is byte accessible, so
+# xTaskCreateStaticPinnedToCore aborted before app_main ever ran.
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
 CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=4096
 CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE=4096
 CONFIG_USB_HOST_HW_BUFFER_BIAS_IN=y
@@ -77,3 +81,16 @@ CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
 # 8x improvement from TCPIP core locking, which also cuts how often the lwIP
 # thread hands buffers around while USB DMA is active.
 CONFIG_LWIP_TCPIP_CORE_LOCKING=y
+
+# LVGL's built-in allocator is a 64 KiB static array in .bss. Where that array
+# lands decides whether this firmware boots. ESP-IDF splits .bss into a low and
+# a high region around the ROM stack area, and only the low one is inside the
+# heap the allocator can use before the scheduler starts. While ESP-DL was
+# linked its own .bss filled the low region and pushed LVGL's pool up to
+# 0x4ff40000, out of the way. With ESP-DL gone the pool moved down to
+# 0x4ff1ad24 and took 64 KiB of the ~63 KiB early heap with it, leaving 13 KiB;
+# the FreeRTOS timer task's 2 KiB stack then fell through to RTCRAM/TCM, which
+# are outside SOC_BYTE_ACCESSIBLE, and xTaskCreateStaticPinnedToCore aborted
+# before app_main ran. Using the C library allocator removes the static pool
+# and lets LVGL draw from the general heap, PSRAM included.
+CONFIG_LV_USE_CLIB_MALLOC=y

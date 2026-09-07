@@ -58,10 +58,10 @@ static inline void rtsp_delay_ms(uint32_t milliseconds)
 
 std::atomic<uint32_t> s_usb_truncated_frames{0};
 
-// The RGB888 frame this pipeline last decoded, offered to the preview and the
-// detector so the one hardware JPEG engine runs each frame once instead of
-// three times. Guarded by a mutex that is also held across the decode, so a
-// borrower cannot observe a buffer being overwritten.
+// The RGB888 frame this pipeline last decoded, offered to the preview so the
+// one hardware JPEG engine runs each frame once instead of twice. Guarded by a
+// mutex that is also held across the decode, so a borrower cannot observe a
+// buffer being overwritten.
 SemaphoreHandle_t decoded_frame_mutex()
 {
     static SemaphoreHandle_t mutex = xSemaphoreCreateMutex();

@@ -23,10 +23,10 @@ esp_err_t rtsp_server_prepare(void);
  * Borrow the most recently decoded USB frame instead of decoding it again.
  *
  * The RTSP pipeline already runs every frame it streams through the one
- * hardware JPEG engine. The preview and the detector used to decode the same
- * frames a second and third time on that same engine, which saturates near 17
- * decodes per second at 640x480 and left the preview's decode call blocking
- * for 133-195 ms against its 200 ms period.
+ * hardware JPEG engine. The preview used to decode the same frames a second
+ * time on that same engine, which saturates near 17 decodes per second at
+ * 640x480 and left the preview's decode call blocking for 133-195 ms against
+ * its 200 ms period.
  *
  * Returns false when no frame newer than `last_sequence` has been decoded, or
  * the borrow could not be taken within `timeout_ms`; the caller then decodes

@@ -1,7 +1,4 @@
-menu "Tab5 Edge AI"
-    config EDGE_LIVE_CAMERA
-        bool "Use USB UVC camera instead of embedded still image"
-        default y
+menu "Tab5 Camera Clock"
     config EDGE_ENABLE_RTSP
         bool "Expose unauthenticated RTSP on trusted LAN"
         default n
@@ -129,8 +126,4 @@ menu "Tab5 Edge AI"
         int "H264 GOP"
         range 1 120
         default 15
-    config EDGE_AI_INTERVAL_MS
-        int "AI pause after each inference (milliseconds)"
-        range 100 10000
-        default 1000
 endmenu

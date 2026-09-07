@@ -1,18 +1,22 @@
-# Tab5 Baby Edge AI（AGPL研究用PoC）
+# Tab5 Camera Clock
 
-ESP32-P4 / M5Stack Tab5 向けの人物検出・在室推定の初期実装です。
-**USB UVCカメラ取得・YOLO26n人物推論・H.264 RTSP配信を統合したPoCです。**
-person は大人も含み、赤ちゃんの識別ではありません。`absent` は検出証拠がないという推定であり、空室の保証ではありません。
-呼吸・窒息・SIDS・睡眠の安全性を判定するものではなく、見守りや医療機器の代替に使用しないでください。
+M5Stack Tab5（ESP32-P4）向けのカメラ時計ファームウェアです。USB UVCカメラの映像を本体画面に表示し、
+同じ映像をH.264でRTSP配信し、SNTPで同期したローカル時刻を表示します。
 
-## Get Started
+以前このリポジトリには人物検出（YOLO26n）が含まれていましたが削除しました。推論は行いません。
 
-初めて試す場合は、次の順番で進めます。モデル作成、PCテスト、Tab5実機テストは別の受入項目です。
-特に、学習やビルドの成功だけで実機の映像・RTSP・精度・長時間安定性が確認できたことにはなりません。
+## できること
 
-### 1. まずPC上のテストを実行する
+- USB UVCカメラの取得（MJPEG優先、YUY2フォールバック）
+- 720x1280縦画面の上部にアスペクト比を保った映像プレビュー、下部にローカル時刻
+- H.264 RTSP配信（`rtsp://<host>.local:8554/baby`、TCPインターリーブ）
+- SNTPによる時刻同期と定期再同期
 
-モデル、カメラ、Tab5がなくても実行できます。
+RTSPは平文かつ認証なしです。信頼できるLAN内でのみ有効にしてください。インターネットに公開しないでください。
+
+## PC上のテスト
+
+Tab5やカメラがなくても実行できます。
 
 ```sh
 git clone https://github.com/fooping-tech/tab5_baby_edge_ai_agpl.git
@@ -20,147 +24,67 @@ cd tab5_baby_edge_ai_agpl
 cmake -S . -B build
 cmake --build build
 ctest --test-dir build --output-on-failure
-python3 -m unittest discover -s tests -p 'test_*.py'
-python3 tools/evaluate_presence.py tests/fixtures/presence.csv
 ```
 
-これは在室状態フィルター、RTSPフレーミング、画像変換、評価集計の自動テストです。カメラ入力、
-YOLO精度、RTSP再生、画面、長時間運転の証明にはなりません。
+RTSPフレーミングと画像変換の自動テストです。カメラ入力、RTSP再生、画面表示、
+長時間運転の証明にはなりません。
 
-### 2. 赤ちゃん検出モデルを作成する（任意）
+## Tab5で動かす
 
-現在の標準ファームウェアはCOCOの `person` 検出モデルです。赤ちゃんだけを検出するモデルを作る場合は、
-私有データセットを用意し、[学習からTab5推論まで](docs/training_and_inference.md) の手順で進めます。
-
-```sh
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -r requirements-training.txt
-yolo detect train model=yolo26n.pt data=/private/baby.yaml imgsz=512 epochs=100 batch=8 seed=42 \
-  project=/private/tab5-artifacts/train name=baby_v1
-yolo detect val model=/private/tab5-artifacts/train/baby_v1/weights/best.pt \
-  data=/private/baby.yaml split=test imgsz=512
-```
-
-学習済みの `best.pt` をそのままTab5へコピーしても動きません。ESP-DLでの量子化・`.espdl`変換と、
-1クラスモデルを受けるファームウェアアダプタの変更が必要です。
-
-### 3. Tab5で初めて動かす
-
-Tab5、USB UVCカメラ、安定電源、ESP-IDF v5.4.2、ESP32-P4ツールチェーンを用意します。
+Tab5、USB UVCカメラ、安定した電源、ESP-IDF v5.4.2、ESP32-P4ツールチェーンを用意します。
 書き込み前に対象ポート、既存ファームウェア、Wi-Fi設定の保管先を確認してください。
 
 ```sh
 mkdir -p third_party
-git clone https://github.com/espressif/esp-dl.git third_party/esp-dl
-git -C third_party/esp-dl checkout 5d9c36063dddbe98b5387828c831d6bbadb1370f
-git clone https://github.com/fooping-tech/tab5_rtsp_logger.git third_party/tab5_rtsp_logger
-git -C third_party/tab5_rtsp_logger checkout e5e5fee79c2232bd5de4a994d8f90e12f4630952
-export ESP_DL_PATH="$(pwd)/third_party/esp-dl"
-export TAB5_REFERENCE_PATH="$(pwd)/third_party/tab5_rtsp_logger"
-cd firmware
-idf.py set-target esp32p4
-idf.py menuconfig
-idf.py build
-```
-
-`Tab5 Edge AI` でWi-FiのSSID/パスワードを設定し、RTSPを使う場合だけ `Expose unauthenticated RTSP on trusted LAN` を有効にします。
-書き込みは手動承認後に行います。
-
-```sh
-idf.py -p /dev/your-confirmed-port flash monitor
-```
-
-USBカメラのストリーム開始、画面の向き、`unknown` への失敗時遷移、RTSP TCP再生を個別に確認します。
-RTSP URL は `rtsp://tab5.local:8554/baby`、転送方式はTCPです。実機テストの詳細は
-[実機テストと受入条件](docs/evaluation.md) を参照してください。
-
-## 実装範囲
-
-| 機能 | 状態 |
-|---|---|
-| 公式 COCO80 YOLO26n / 512 / P4 モデルのRGB888推論 | 実装済み、検証状況は PLANS.md |
-| personクラス0の最大スコア → present/absent/unknown | ホストでテスト可能 |
-| 起動・エラー・古いフレーム → unknown | 実装済み |
-| 同意済みJPEGを1枚埋め込むスモークテスト | 実装済み。時間的な在室判定はunknownのままが正常 |
-| USB-UVC取得、最新フレームcopy broker、AI並行処理 | 実装済み、実機未検証 |
-| H.264 / RTSP TCP interleaved、SDIO Wi-Fi、mDNS | 実装済み、LAN実機未検証。RTSPは明示的に有効化 |
-| 内蔵カメラ、画面、SD | 対象外 |
-| baby 1-class detector | 学習・変換手順のみ。重みなし |
-| supine / not_supine / unknown | 拡張契約のみ。出力は常にunknown |
-
-## 自動テスト（モデル・画像不要）
-
-```sh
-cmake -S . -B build
-cmake --build build
-ctest --test-dir build --output-on-failure
-python3 -m unittest discover -s tests -p 'test_*.py'
-python3 tools/evaluate_presence.py tests/fixtures/presence.csv
-```
-
-## ESP32-P4ビルドの詳細
-
-ESP-IDF **v5.4.2** とP4ツールチェーンをインストールし、その環境を有効にしてください。
-Tab5の16MB flash / PSRAMを前提とします。USB、WLAN、ネイティブ縦画面を初期化します。
-USB Serial/JTAGをログ出力先とし、watchdogは無効化していません。実際のハードウェアでのタイミング調整は別途必要です。
-
-```sh
-mkdir -p third_party
-git clone https://github.com/espressif/esp-dl.git third_party/esp-dl
-git -C third_party/esp-dl checkout 5d9c36063dddbe98b5387828c831d6bbadb1370f
-export ESP_DL_PATH="$(pwd)/third_party/esp-dl"
 git clone https://github.com/fooping-tech/tab5_rtsp_logger.git third_party/tab5_rtsp_logger
 git -C third_party/tab5_rtsp_logger checkout e5e5fee79c2232bd5de4a994d8f90e12f4630952
 export TAB5_REFERENCE_PATH="$(pwd)/third_party/tab5_rtsp_logger"
-cd firmware
-idf.py set-target esp32p4
-idf.py menuconfig
-idf.py build
 ```
 
-`Tab5 Edge AI` でUSB入力（既定値）、SSID、パスワードを設定します。
-RTSPを使う場合は `Expose unauthenticated RTSP on trusted LAN` を明示的に有効にしてください。
-既定URLは `rtsp://tab5.local:8554/baby`。mDNS名は変更可能です。
-クライアントはTCPを選択します：`ffplay -rtsp_transport tcp rtsp://tab5.local:8554/baby`。
-カメラはUSB-Aへ接続。既定要求プロファイルはMJPEG優先・YUY2代替、640x480/15fpsです。
-認証・暗号化はありません。信頼できる隔離LANのみで使い、ポート転送やインターネット公開はしないでください。
-Wi-Fi設定はローカルsdkconfigにのみ保存し、ファームウェアにも含まれるためビルド成果物を公開しないでください。
+Wi-Fi認証情報は `firmware/sdkconfig.local` に書きます。このファイルは `.gitignore` 済みです。
 
-静止画テストを使う場合はmenuconfigでUSB入力を無効にして、
-`idf.py -DPOC_JPEG=/absolute/path/to/consented-test.jpg build` を実行します。
-このモードでは画像がファームウェアに埋め込まれます。子どもの画像を使った `.bin` やbuild成果物を公開しないでください。
-公開検証には権利を確認した非機微なサンプルを使ってください。
-ビルドはネットワークからESP-IDF管理依存を取得します。mainのmanifestでバージョンを固定し、
-生成される `firmware/dependencies.lock` は機種固有のパスを含むためGit管理せず、検証記録とともにローカル保存します。
-ESP-DLとYOLO26は上記のGit revisionで固定し、異なるrevisionはCMakeが拒否します。
-変更した依存checkoutの内容は利用者がレビューしてください（HEAD一致だけでは作業ツリーの改変は検知しません）。
-
-書き込みは対象ポートと既存ファームウェアの退避を確認した後に手動で実行します：
+```
+CONFIG_TAB5_WIFI_SSID="your-ssid"
+CONFIG_TAB5_WIFI_PASSWORD="your-password"
+CONFIG_EDGE_ENABLE_RTSP=y
+```
 
 ```sh
-idf.py -p /dev/your-confirmed-port flash monitor
+cd firmware
+idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.local" set-target esp32p4
+idf.py build
+idf.py -p /dev/cu.usbmodemXXXX flash monitor
 ```
 
-USBモードではAIワーカーが最新画像だけを処理し、別の状態ループが毎秒presence/postureを出力します。
-切断・ストリーム世代変更・結果の鮮度切れはunknownに戻ります。AIは推論後1秒休止（設定可能）、RTSPとは独立です。
-静止画モードは1回のみ推論し、同じ画像を新しいフレーム扱いにして時間条件を満たすことはありません。
+## 設定
 
-## 構成と次段階
+`idf.py menuconfig` の `Tab5 Camera Clock` にあります。
 
-- `core/presence.hpp`: 独立した時間フィルター（入力閾値0.5、入室2秒、退室5秒、鮮度10秒）。値は未調整のPoC既定値。
-- `firmware/main/detector.*`: 公式ESP-DL前後処理、COCO80モデル契約、借用RGB888フレーム境界。
-- [Get Started: 学習からTab5推論まで](docs/training_and_inference.md)
-- [データ収集・学習・量子化の詳細](docs/model_pipeline.md)
-- [設計とbaby/姿勢拡張の契約](docs/architecture.md)
-- [USB/RTSP統合・移植元・実機確認](docs/usb_rtsp.md)
-- [Camera Clock画面・実機試験条件](docs/ui_hardware.md)
-- [実機テストと受入条件](docs/evaluation.md)
-- [依存とライセンス](docs/dependencies.md)、[実施記録](PLANS.md)
+| 項目 | 既定 | 説明 |
+|---|---|---|
+| `EDGE_ENABLE_RTSP` | n | 平文RTSPを有効化する |
+| `EDGE_TIMEZONE` | `JST-9` | POSIX TZ文字列。UIより先に適用される |
+| `EDGE_SNTP_SERVER` | `pool.ntp.org` | 時刻同期先 |
+| `EDGE_SNTP_RESYNC_MINUTES` | 60 | 再同期間隔。1回だけではRTCが漂う |
+| `TAB5_UVC_URB_COUNT` / `_KIB` | 12 / 16 | USBアイソクロナス転送の在庫。既定の3個では取りこぼす |
+| `TAB5_PREVIEW_MAX_AGE_MS` | 1500 | この時間を超えた映像は表示せず画面を消す |
+| `TAB5_JPEG_DECODE_TIMEOUT_MS` | 500 | 1フレームの復号を諦めるまでの時間 |
+| `TAB5_RTSP_FPS` | 10 | 復号エンジンを画面と分け合うため15より低い |
+
+## 既知の問題
+
+ESP32-P4のpre-v3シリコン（本体ログの `chip revision`）には、USB DWC OTGのアイソクロナス転送が
+他のバスマスタと同時に動くとDMAが誤ったアドレスへ書き込む不具合があります
+（[espressif/esp-idf#18235](https://github.com/espressif/esp-idf/issues/18235)）。
+本ファームウェアでは `assert failed: spinlock_release`（`components/usb/hcd_dwc.c` のUSBホストISR）による
+再起動として現れます。実測で平均8.5分に1回程度です。アプリケーション側では解消できません。
+
+同じ領域で、ハードウェアJPEG復号が稀にタイムアウトします。1フレームが失われるだけで復帰します。
 
 ## ライセンス
 
-本リポジトリのコードは **AGPL-3.0-only**（[全文](LICENSE)）。依存のライセンスはそれぞれ保持します。
-Ultralytics由来のコード・モデルを使うため、配布やネットワーク提供の際は対応ソースと通知の要件を確認してください。
-別リポジトリ/APIに分けるだけで、組み合わせたファームウェアのAGPL義務が消えるとは扱いません。
-詳細は [Ultralytics公式](https://www.ultralytics.com/license) と [GNU AGPL](https://www.gnu.org/licenses/agpl-3.0.html) を確認してください。
+本リポジトリのコードは **MIT**（[全文](LICENSE)）。
+`firmware/main/hal`、`firmware/main/rtsp`、`camera_clock_font_64.c`、`camera_clock_time_88.c` は
+[tab5_rtsp_logger](https://github.com/fooping-tech/tab5_rtsp_logger) revision `e5e5fee` からの移植で、
+上流のMIT通知は `licenses/tab5_rtsp_logger-MIT.txt` に保持しています。
+依存componentのライセンスはそれぞれ保持します。

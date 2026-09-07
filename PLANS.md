@@ -20,7 +20,7 @@
 - Hardware boundary remains open: no flash, USB enumeration, simultaneous live inference/RTSP playback, reconnect, Scrypted/HomeKit, RGB orientation or soak performed. No baby training or posture classification added.
 
 ## Initial scaffold scope / acceptance (historical)
-- AGPL-3.0-only research PoC, separate from tab5_rtsp_logger; no changes to that repository.
+- MIT licensed, separate from tab5_rtsp_logger; no changes to that repository.
 - Implement ESP32-P4 stock YOLO26n person inference on an explicitly supplied still JPEG, plus a portable presence state machine and host tests.
 - Expose an RGB frame boundary for a future Tab5 camera adapter; do not pretend still-image inference is live camera validation.
 - Document private data collection, baby one-class training, ESP-PPQ conversion, model provenance and evaluation.
@@ -29,7 +29,7 @@
 
 ## Initial scaffold plan (historical)
 1. Inspect empty remote and upstream APIs; pin dependencies.
-2. Bootstrap main with this ledger and AGPL license, then create an implementation PR branch (empty remote has no PR base).
+2. Bootstrap main with this ledger and the license, then create an implementation PR branch (empty remote has no PR base).
 3. Add firmware, state tests, evaluation tooling, dataset examples and documentation.
 4. Run available automated checks, record blockers and publish PR; do not merge or flash hardware.
 
@@ -82,3 +82,13 @@
 - Translate the user-facing Markdown documentation into Japanese and introduce a beginner Get Started path: model creation, host tests, and separately approved hardware tests. Keep exact commands, privacy restrictions, custom-model adapter boundary, and the unclosed watchdog/endurance conditions explicit.
 - Rewrote the README as a Japanese Get Started entrypoint and translated architecture, dependency/license, evaluation, model-pipeline, USB/RTSP, and Camera Clock hardware documents. The three-step introduction separates host tests, optional private baby-model creation, and manually approved Tab5 tests, while linking detailed Japanese guides. Markdown paths and headings were checked; `git diff --check`, host CTest 3/3, and Python unittest 6/6 passed. No model, device, or runtime claim changed.
 - User observed mojibake on the display. The imported generated Camera Clock fonts do work in the pinned reference; this project missed reference LVGL settings LV_FONT_FMT_TXT_LARGE and LV_USE_FONT_COMPRESSED. Restore the original font assets and enable those settings before the next flash.
+
+## 2026-09-08 推論機能の削除とMIT化
+
+- USB UVCプレビュー、H.264 RTSP、ローカル時計に用途を限定し、ESP-DL/YOLO26nによる人物検出と
+  `PresenceFilter` を削除した。`detector.*`、`core/presence.hpp`、学習/評価ドキュメント、
+  評価スクリプト、モデルmanifestを削除し、`ESP_DL_PATH` 依存をビルドから外した。
+- リポジトリのライセンスをAGPL-3.0-onlyからMITへ変更した。AGPLはUltralytics由来のYOLO26n重みに
+  起因していたため、その依存が無くなったことが前提である。AGPL版として配布済みのリビジョンは
+  その受領者に対してAGPLのままである。移植元 tab5_rtsp_logger のMIT通知は `licenses/` に保持する。
+- 単独著作者（`git log` 上 `fukuhala@gmail.com` のみ）であることを再ライセンスの前提とした。

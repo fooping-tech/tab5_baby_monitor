@@ -7,6 +7,23 @@ menu "Tab5 Edge AI"
         default n
         help
             Plaintext video at TCP 8554/baby. Do not expose to the internet.
+    config EDGE_TIMEZONE
+        string "POSIX TZ string for the local clock"
+        default "JST-9"
+        help
+            Applied before the UI starts so the clock never renders UTC.
+            "JST-9" is Asia/Tokyo. The POSIX sign is inverted: UTC+9 is -9.
+    config EDGE_SNTP_SERVER
+        string "SNTP server"
+        default "pool.ntp.org"
+    config EDGE_SNTP_RESYNC_MINUTES
+        int "SNTP resynchronisation interval (minutes)"
+        range 5 1440
+        default 60
+        help
+            The SNTP client stays resident and repeats at this interval. The
+            ESP32-P4 RTC drifts noticeably over a multi-hour run, so a single
+            sync at boot is not enough to keep the displayed clock correct.
     config EDGE_HOSTNAME
         string "mDNS hostname (no .local suffix)"
         default "tab5"
@@ -28,6 +45,65 @@ menu "Tab5 Edge AI"
         int "USB capture height"
         range 240 720
         default 480
+    config TAB5_UVC_PREFER_YUY2
+        bool "Negotiate uncompressed YUY2 before MJPEG"
+        default n
+        help
+            YUY2 never touches the ESP32-P4 hardware JPEG decoder, so a
+            corrupted frame costs one frame instead of rebooting the device
+            through "assert failed: spinlock_release". Enable it only on a
+            camera that genuinely streams uncompressed.
+
+            The Logitech C920 does not. It advertises YUY2 640x480 at 15 fps
+            and the negotiated endpoint carries 3060 bytes per microframe
+            (24.5 MB/s against the 9.2 MB/s the mode needs), yet the camera
+            itself raises the UVC payload error bit on nearly every packet:
+            measured 7464 "uvc-isoc: frame error" per minute against 109 per
+            minute on MJPEG, with only 9 usable preview frames in 1.7 minutes.
+            Logitech's uncompressed path is a host-driver conversion from the
+            compressed stream, not a real camera mode.
+    config TAB5_UVC_URB_COUNT
+        int "USB isochronous URBs per stream"
+        range 3 16
+        default 12
+        help
+            Depth of the in-flight isochronous transfer queue. The driver
+            default of 3 leaves only a few milliseconds in flight. 12 URBs of
+            16 KiB is the combination reported to work with a Logitech C920 on
+            an ESP32 USB host.
+    config TAB5_UVC_URB_KIB
+        int "Size of one USB isochronous URB (KiB)"
+        range 4 64
+        default 16
+        help
+            Larger URBs mean fewer interrupts and more buffering. Total
+            in-flight memory is URB_COUNT x URB_KIB, taken from PSRAM.
+    config TAB5_JPEG_DECODE_TIMEOUT_MS
+        int "Hardware JPEG decode timeout (milliseconds)"
+        range 100 5000
+        default 500
+        help
+            How long to wait for one hardware JPEG decode before giving up on
+            that frame.
+
+            A longer wait is tempting: on timeout the ESP-IDF driver calls
+            dma2d_force_end() on a transaction that has not finished and logs
+            "dma2d_force_end(980): transaction not in-flight", which is the
+            state the device later aborts from with
+            "assert failed: spinlock_release". But the wait is synchronous in
+            the RTSP task, so raising this to 2000 ms turned each failed frame
+            into a two second stall and dropped the stream to well under one
+            frame per second - the video stopped being watchable. Keep it
+            short enough that a bad frame costs a frame, not the stream.
+    config TAB5_PREVIEW_MAX_AGE_MS
+        int "Newest age a preview frame may have when displayed (ms)"
+        range 200 5000
+        default 1500
+        help
+            The canvas is blanked when the displayed frame gets older than
+            this, so the screen never presents a stale picture as live. It is
+            also checked before decoding, because decoding a frame that is
+            already too old only guarantees it will be thrown away.
     config TAB5_UVC_FPS
         int "Requested USB FPS"
         range 1 30
@@ -35,7 +111,16 @@ menu "Tab5 Edge AI"
     config TAB5_RTSP_FPS
         int "RTSP target FPS"
         range 1 30
-        default 15
+        default 10
+        help
+            Every RTSP frame is decoded by the one hardware JPEG engine that
+            the on-device preview and the detector also queue on. Measured at
+            640x480, a decode occupies the engine for about 57 ms, so the
+            engine saturates near 17 decodes per second. At 15 fps RTSP took
+            85% of that and the preview's decode call blocked for 164 ms
+            against its 200 ms period, which is what blanked the camera image
+            on the screen. Raise this only if the local display does not
+            matter for your deployment.
     config TAB5_RTSP_BITRATE
         int "H264 bitrate"
         range 100000 5000000

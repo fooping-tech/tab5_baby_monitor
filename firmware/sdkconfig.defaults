@@ -46,3 +46,27 @@ CONFIG_LV_FONT_FMT_TXT_LARGE=y
 CONFIG_LV_USE_FONT_COMPRESSED=y
 # CONFIG_LV_BUILD_EXAMPLES is not set
 CONFIG_EDGE_HOSTNAME="tab5"
+
+# edge_ai runs one non-preemptible ESP-DL pass of 2.4-3.5 s, so an idle task
+# can legitimately be starved for several seconds. Both idle tasks stay
+# watched, with a timeout wide enough to absorb one inference.
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+# Do NOT enable CONFIG_ESP_SYSTEM_USE_EH_FRAME here. It gives RISC-V real panic
+# backtraces, but the unwind tables add ~780 KiB of app image, and with
+# CONFIG_SPIRAM_XIP_FROM_PSRAM that comes straight out of PSRAM: measured
+# free PSRAM fell from 2323036 to 1775308 bytes and the largest free block
+# dropped to exactly 2 MiB, so the RTSP 2 MiB USB input buffer no longer fit
+# and every DESCRIBE failed. Enable it only in a scratch build while debugging
+# a panic, and never in a build that also serves RTSP.
+
+# ESP32-P4 pre-v3 silicon (this board reports "chip revision: v1.3") mishandles
+# AHB/AXI bus arbitration when the USB DWC OTG controller runs isochronous
+# transfers alongside another bus master: the USB DMA writes into the wrong
+# SRAM address and corrupts whatever lives there. It surfaces here as
+# "assert failed: spinlock_release" raised from intr_hdlr_main() in
+# components/usb/hcd_dwc.c, i.e. the USB host ISR releasing a lock whose owner
+# field has been overwritten. See espressif/esp-idf#18235, where the same
+# signature appears with EMAC as the second master; the reporter measured an
+# 8x improvement from TCPIP core locking, which also cuts how often the lwIP
+# thread hands buffers around while USB DMA is active.
+CONFIG_LWIP_TCPIP_CORE_LOCKING=y

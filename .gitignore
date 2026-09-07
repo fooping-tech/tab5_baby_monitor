@@ -3,6 +3,7 @@ firmware/build/
 firmware/build-*/
 firmware/managed_components/
 firmware/sdkconfig
+firmware/sdkconfig.local
 firmware/sdkconfig.old
 firmware/dependencies.lock
 .venv/

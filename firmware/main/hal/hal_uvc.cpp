@@ -27,7 +27,7 @@ namespace {
 constexpr char kTag[] = "uvc";
 constexpr uint32_t kWidth = CONFIG_TAB5_UVC_WIDTH;
 constexpr uint32_t kHeight = CONFIG_TAB5_UVC_HEIGHT;
-constexpr size_t kMaxFrameBytes = 2 * 1024 * 1024;
+constexpr size_t kMaxFrameBytes = HAL_UVC_MAX_FRAME_BYTES;
 constexpr size_t kSlotCount = 3;
 // Some UVC cameras keep the stream handle alive after isochronous payload
 // errors, but stop producing complete frames. Detect that state and reopen
@@ -330,8 +330,14 @@ static bool open_profile(enum uvc_host_stream_format format, uint32_t width, uin
     config.advanced.number_of_frame_buffers = kSlotCount;
     config.advanced.frame_size = 0;
     config.advanced.frame_heap_caps = MALLOC_CAP_SPIRAM;
-    config.advanced.number_of_urbs = 3;
-    config.advanced.urb_size = 0;
+    // The default URB budget (3 URBs of 4x MPS) holds only a few milliseconds
+    // of an uncompressed stream in flight, so any scheduling delay drops
+    // isochronous packets: 640x480 YUY2 at 15 fps is about 9.2 MB/s and
+    // produced 10582 "uvc-isoc: frame error" entries in two minutes on the
+    // defaults. Buy depth instead; URBs come from PSRAM here because
+    // CONFIG_USB_HOST_DWC_DMA_CAP_MEMORY_IN_PSRAM is enabled.
+    config.advanced.number_of_urbs = CONFIG_TAB5_UVC_URB_COUNT;
+    config.advanced.urb_size = CONFIG_TAB5_UVC_URB_KIB * 1024;
     return uvc_host_stream_open(&config, pdMS_TO_TICKS(3000), stream) == ESP_OK;
 }
 
@@ -502,17 +508,29 @@ static void stream_task(void *)
             s_state.store(State::Negotiating);
             uvc_host_stream_hdl_t stream = nullptr;
             bool stream_started = false;
-            if (stream_can_continue()) {
-                stream_started = try_stream_profile(UVC_VS_FORMAT_MJPEG, false, &stream);
-            }
-            if (!stream_started && stream_can_continue()) {
-                stream_started = try_stream_profile(UVC_VS_FORMAT_MJPEG, true, &stream);
-            }
-            if (!stream_started && stream_can_continue()) {
-                stream_started = try_stream_profile(UVC_VS_FORMAT_YUY2, false, &stream);
-            }
-            if (!stream_started && stream_can_continue()) {
-                stream_started = try_stream_profile(UVC_VS_FORMAT_YUY2, true, &stream);
+            // Format preference order, see CONFIG_TAB5_UVC_PREFER_YUY2.
+            // MJPEG routes every frame through the ESP32-P4 hardware JPEG
+            // decoder, where a corrupted frame can take the whole device
+            // down. YUY2 avoids that but only helps on a camera that really
+            // streams uncompressed; the Logitech C920 advertises YUY2 and
+            // then raises the UVC error bit on nearly every packet.
+            static constexpr enum uvc_host_stream_format kFormatOrder[] = {
+#if CONFIG_TAB5_UVC_PREFER_YUY2
+                UVC_VS_FORMAT_YUY2, UVC_VS_FORMAT_MJPEG,
+#else
+                UVC_VS_FORMAT_MJPEG, UVC_VS_FORMAT_YUY2,
+#endif
+            };
+            for (const auto format : kFormatOrder) {
+                for (const bool fallback : {false, true}) {
+                    if (stream_started || !stream_can_continue()) {
+                        break;
+                    }
+                    stream_started = try_stream_profile(format, fallback, &stream);
+                }
+                if (stream_started) {
+                    break;
+                }
             }
             if (!stream_started) {
                 if (!stream_can_continue()) {

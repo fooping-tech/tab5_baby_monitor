@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "hal/hal_uvc.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -17,6 +18,30 @@ extern "C" {
 /** Start the TCP RTSP listener. Camera hardware is opened on the first RTSP session. */
 esp_err_t rtsp_server_start(void);
 esp_err_t rtsp_server_prepare(void);
+
+/**
+ * Borrow the most recently decoded USB frame instead of decoding it again.
+ *
+ * The RTSP pipeline already runs every frame it streams through the one
+ * hardware JPEG engine. The preview and the detector used to decode the same
+ * frames a second and third time on that same engine, which saturates near 17
+ * decodes per second at 640x480 and left the preview's decode call blocking
+ * for 133-195 ms against its 200 ms period.
+ *
+ * Returns false when no frame newer than `last_sequence` has been decoded, or
+ * the borrow could not be taken within `timeout_ms`; the caller then decodes
+ * for itself, which is cheap because an idle pipeline means an idle engine.
+ * The buffer is RGB888 and stays valid only until rtsp_release_decoded_frame().
+ * The pipeline cannot decode its next frame while a borrow is open, so copy
+ * what you need, release immediately, and never hold it across a blocking
+ * call such as bsp_display_lock().
+ *
+ * Freshness is still the caller's decision: `info.captured_us` is the capture
+ * timestamp, and a borrowed frame is no more current than that says.
+ */
+bool rtsp_borrow_decoded_frame(uint32_t last_sequence, const uint8_t **rgb888,
+                               hal_uvc_frame_info_t *info, uint32_t timeout_ms);
+void rtsp_release_decoded_frame(void);
 
 // Read-only server/pipeline health. Counters are lifetime values for the
 // current boot and are not reset when an RTSP client disconnects.

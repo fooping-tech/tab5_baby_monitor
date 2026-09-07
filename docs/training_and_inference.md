@@ -56,8 +56,8 @@ Python 3.10または3.11の隔離環境で実行します。GPU/RAMに応じて 
 `epochs=100` と `batch=8` は開始値であり、固定された最適値ではありません。
 
 ```sh
-git clone https://github.com/fooping-tech/tab5_baby_edge_ai_agpl.git
-cd tab5_baby_edge_ai_agpl
+git clone https://github.com/fooping-tech/tab5_baby_monitor.git
+cd tab5_baby_monitor
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements-training.txt

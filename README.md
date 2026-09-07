@@ -15,8 +15,8 @@ person は大人も含み、赤ちゃんの識別ではありません。`absent
 モデル、カメラ、Tab5がなくても実行できます。
 
 ```sh
-git clone https://github.com/fooping-tech/tab5_baby_edge_ai_agpl.git
-cd tab5_baby_edge_ai_agpl
+git clone https://github.com/fooping-tech/tab5_baby_monitor.git
+cd tab5_baby_monitor
 cmake -S . -B build
 cmake --build build
 ctest --test-dir build --output-on-failure
